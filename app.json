@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Hacker News",
-    "slug": "hacker-news",
+    "name": "OpenBird",
+    "slug": "openbird",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "hacker-news",
+    "scheme": "open-bird",
     "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/images/splash.png",
@@ -16,7 +16,8 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ayaanzaveri.openbird"
     },
     "android": {
       "adaptiveIcon": {
@@ -35,6 +36,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0ed1cb80-326f-402e-96cf-7eca8e8b61fc"
+      }
+    },
+    "owner": "ayaanzaveri"
   }
 }

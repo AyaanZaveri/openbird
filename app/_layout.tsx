@@ -18,7 +18,6 @@ import { StatusBar } from 'expo-status-bar';
 import * as React from 'react';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { Uniwind, useUniwind } from 'uniwind';
 
 export {
@@ -61,33 +60,31 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <KeyboardProvider>
-        <ThemeProvider value={NAV_THEME[theme ?? 'light']}>
-          <View style={{ flex: 1, backgroundColor: NAV_THEME[resolvedTheme].colors.background }}>
-            <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-            <Stack
-              screenOptions={{
-                headerShadowVisible: false,
-                headerTitleAlign: 'left',
-                headerTitleStyle: { fontFamily: 'Geist_700Bold' },
+      <ThemeProvider value={NAV_THEME[theme ?? 'light']}>
+        <View style={{ flex: 1, backgroundColor: NAV_THEME[resolvedTheme].colors.background }}>
+          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+          <Stack
+            screenOptions={{
+              headerShadowVisible: false,
+              headerTitleAlign: 'left',
+              headerTitleStyle: { fontFamily: 'Geist_700Bold' },
+              contentStyle: { backgroundColor: NAV_THEME[resolvedTheme].colors.background },
+            }}>
+            <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="settings"
+              options={{
+                headerShown: false,
+                animation: 'ios_from_right',
+                presentation: 'card',
+                freezeOnBlur: true,
                 contentStyle: { backgroundColor: NAV_THEME[resolvedTheme].colors.background },
-              }}>
-              <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-              <Stack.Screen
-                name="settings"
-                options={{
-                  headerShown: false,
-                  animation: 'ios_from_right',
-                  presentation: 'card',
-                  freezeOnBlur: true,
-                  contentStyle: { backgroundColor: NAV_THEME[resolvedTheme].colors.background },
-                }}
-              />
-            </Stack>
-            <PortalHost />
-          </View>
-        </ThemeProvider>
-      </KeyboardProvider>
+              }}
+            />
+          </Stack>
+          <PortalHost />
+        </View>
+      </ThemeProvider>
     </GestureHandlerRootView>
   );
 }

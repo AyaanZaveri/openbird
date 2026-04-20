@@ -8,20 +8,15 @@ import {
   settingsSchema,
   type SettingsForm,
 } from '@/lib/provider-settings';
-import { THEME } from '@/lib/theme';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { streamText } from 'ai';
-import * as Linking from 'expo-linking';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { fetch as expoFetch } from 'expo/fetch';
 import { Menu, SendHorizontal } from 'lucide-react-native';
 import * as React from 'react';
-import { Platform, ScrollView, View } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { MarkdownStyle } from 'react-native-enriched-markdown';
-import { StreamdownText } from 'react-native-streamdown';
-import { useUniwind, withUniwind } from 'uniwind';
+import { withUniwind } from 'uniwind';
 
 type Message = {
   id: string;
@@ -219,81 +214,8 @@ export function ChatScreen() {
 }
 
 function ChatBubble({ message }: { message: Message }) {
-  const { theme } = useUniwind();
-  const palette = THEME[theme ?? 'light'];
   const isUser = message.role === 'user';
   const displayText = message.text || (message.pending ? 'Thinking...' : '');
-  const markdownStyle = React.useMemo<MarkdownStyle>(
-    () => ({
-      paragraph: {
-        color: palette.foreground,
-        fontFamily: 'Geist_400Regular',
-        fontSize: 16,
-        lineHeight: 22,
-        marginTop: 0,
-        marginBottom: 0,
-      },
-      link: {
-        color: palette.primary,
-        underline: true,
-      },
-      strong: {
-        fontFamily: 'Geist_700Bold',
-        fontWeight: 'normal',
-        color: palette.foreground,
-      },
-      em: {
-        fontFamily: 'Geist_400Regular',
-        color: palette.foreground,
-      },
-      code: {
-        fontFamily: 'GeistMono_400Regular',
-        fontSize: 14,
-        color: palette.foreground,
-        backgroundColor: palette.card,
-        borderColor: palette.border,
-      },
-      codeBlock: {
-        fontFamily: 'GeistMono_400Regular',
-        fontSize: 14,
-        lineHeight: 20,
-        color: palette.foreground,
-        backgroundColor: palette.card,
-        borderColor: palette.border,
-        borderRadius: 12,
-        borderWidth: 1,
-        padding: 12,
-        marginTop: 8,
-        marginBottom: 8,
-      },
-      blockquote: {
-        backgroundColor: palette.card,
-        borderColor: palette.border,
-        borderWidth: 3,
-        gapWidth: 12,
-        color: palette.foreground,
-        marginTop: 8,
-        marginBottom: 8,
-      },
-      image: {
-        height: 220,
-        borderRadius: 12,
-        marginTop: 8,
-        marginBottom: 8,
-      },
-      math: {
-        color: palette.foreground,
-        backgroundColor: palette.card,
-        padding: 12,
-        marginTop: 8,
-        marginBottom: 8,
-      },
-      inlineMath: {
-        color: palette.foreground,
-      },
-    }),
-    [palette.border, palette.card, palette.foreground, palette.primary]
-  );
 
   return (
     <View className={isUser ? 'items-end' : 'items-start'}>
@@ -303,18 +225,9 @@ function ChatBubble({ message }: { message: Message }) {
             ? 'bg-primary max-w-[85%] rounded-2xl px-4 py-3'
             : 'bg-muted max-w-[85%] rounded-2xl px-4 py-3'
         }>
-        {isUser ? (
-          <Text className="text-primary-foreground">{displayText}</Text>
-        ) : (
-          <StreamdownText
-            markdown={displayText}
-            markdownStyle={markdownStyle}
-            allowTrailingMargin={false}
-            onLinkPress={(event) => {
-              void Linking.openURL(event.url);
-            }}
-          />
-        )}
+        <Text className={isUser ? 'text-primary-foreground' : 'text-foreground'}>
+          {displayText}
+        </Text>
       </View>
     </View>
   );

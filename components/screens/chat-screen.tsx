@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
-import { Input } from '@/components/ui/input';
 import { MarkdownText } from '@/components/ui/markdown';
+import { Textarea } from '@/components/ui/textarea';
 import { Text } from '@/components/ui/text';
 import {
   defaultSettings,
@@ -217,8 +217,8 @@ export function ChatScreen() {
   return (
     <StyledSafeAreaView className="bg-background flex-1">
       <KeyboardAvoidingView behavior="padding" className="flex-1">
-        <View className="flex-1 px-4 pt-2 pb-4">
-          <View className="mb-4 flex-row items-center justify-between gap-3">
+        <View className="flex-1 px-4 pb-4">
+          <View className="mb-4 flex-row items-center justify-between gap-3 pt-2">
             <Button
               size="icon"
               variant="ghost"
@@ -250,7 +250,9 @@ export function ChatScreen() {
                 justifyContent: 'flex-end',
                 paddingVertical: 24,
               }}
-              keyboardShouldPersistTaps="handled">
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              scrollEventThrottle={16}>
               {messages.map((message) => (
                 <ChatBubble
                   key={message.id}
@@ -267,30 +269,33 @@ export function ChatScreen() {
 
           {chatError ? <Text className="text-destructive mb-3 text-sm">{chatError}</Text> : null}
 
-          <View className="border-border bg-card mt-4 flex-row items-center gap-2 rounded-2xl border p-2">
-            <Input
-              value={draft}
-              onChangeText={setDraft}
-              editable={!isSending}
-              placeholder="Say something to OpenBird..."
-              multiline
-              className="max-h-32 min-h-11 flex-1 rounded-xl border-0 bg-transparent px-3 py-2"
-              textAlignVertical="center"
-              onSubmitEditing={() => {
-                if (Platform.OS !== 'web') {
-                  sendMessage();
-                }
-              }}
-              blurOnSubmit={false}
-            />
-            <Button
-              size="icon"
-              className="h-11 w-11 rounded-xl"
-              disabled={isSending}
-              onPress={() => void sendMessage()}
-              accessibilityLabel="Send message">
-              <Icon as={SendHorizontal} className="text-primary-foreground size-5" />
-            </Button>
+          <View className="-mx-4 mt-4 px-4">
+            <View className="border-border/70 bg-background rounded-2xl border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
+              <Textarea
+                value={draft}
+                onChangeText={setDraft}
+                editable={!isSending}
+                placeholder="Ask OpenBird..."
+                className="max-h-48 min-h-12 border-0 px-1 py-1 shadow-none"
+                onSubmitEditing={() => {
+                  if (Platform.OS !== 'web') {
+                    sendMessage();
+                  }
+                }}
+                blurOnSubmit={false}
+              />
+
+              <View className="mt-2 flex-row items-center justify-end">
+                <Button
+                  size="icon"
+                  className="size-9 rounded-full"
+                  disabled={isSending}
+                  onPress={() => void sendMessage()}
+                  accessibilityLabel="Send message">
+                  <Icon as={SendHorizontal} className="text-primary-foreground size-4.5" />
+                </Button>
+              </View>
+            </View>
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -318,7 +323,8 @@ function ChatBubble({
 
   return (
     <View className={isUser ? 'items-end' : 'items-stretch'}>
-      <View className={isUser ? 'bg-primary max-w-[85%] rounded-full px-4 py-2.5' : 'w-full py-1 px-1'}>
+      <View
+        className={isUser ? 'bg-primary max-w-[85%] rounded-full px-4 py-2.5' : 'w-full px-1 py-1'}>
         {isUser ? (
           <Text className="text-primary-foreground">{displayText}</Text>
         ) : (

@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
+import { MarkdownText } from '@/components/ui/markdown';
 import { Text } from '@/components/ui/text';
 import {
   defaultSettings,
@@ -10,11 +11,14 @@ import {
 } from '@/lib/provider-settings';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { streamText } from 'ai';
+import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { fetch as expoFetch } from 'expo/fetch';
-import { Menu, SendHorizontal } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
+import { Copy, Menu, RotateCw, SendHorizontal } from 'lucide-react-native';
 import * as React from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { withUniwind } from 'uniwind';
 
@@ -34,7 +38,20 @@ export function ChatScreen() {
   const [draft, setDraft] = React.useState('');
   const [settings, setSettings] = React.useState<SettingsForm>(defaultSettings);
   const [chatError, setChatError] = React.useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null);
   const [isSending, setIsSending] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!copiedMessageId) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setCopiedMessageId(null);
+    }, 1500);
+
+    return () => clearTimeout(timeoutId);
+  }, [copiedMessageId]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -53,31 +70,13 @@ export function ChatScreen() {
     }, [])
   );
 
-  async function sendMessage() {
-    const value = draft.trim();
-    if (!value || isSending) {
-      return;
-    }
-
+  async function streamAssistantResponse(nextMessages: Message[], assistantMessageId: string) {
     const parsedSettings = settingsSchema.safeParse(settings);
     if (!parsedSettings.success) {
       setChatError(parsedSettings.error.issues[0]?.message ?? 'Update your provider settings.');
       router.push('/settings');
       return;
     }
-
-    const timestamp = Date.now();
-    const userMessage: Message = { id: `${timestamp}-user`, role: 'user', text: value };
-    const assistantMessageId = `${timestamp}-assistant`;
-    const nextMessages = [
-      ...messages,
-      userMessage,
-      { id: assistantMessageId, role: 'assistant' as const, text: '', pending: true },
-    ];
-
-    setChatError(null);
-    setMessages(nextMessages);
-    setDraft('');
 
     const provider = createOpenAICompatible({
       name: 'custom-provider',
@@ -89,6 +88,7 @@ export function ChatScreen() {
     setIsSending(true);
 
     try {
+      setChatError(null);
       const result = streamText({
         model: provider(parsedSettings.data.model),
         messages: nextMessages
@@ -137,6 +137,83 @@ export function ChatScreen() {
     }
   }
 
+  async function sendMessage() {
+    const value = draft.trim();
+    if (!value || isSending) {
+      return;
+    }
+
+    const timestamp = Date.now();
+    const userMessage: Message = { id: `${timestamp}-user`, role: 'user', text: value };
+    const assistantMessageId = `${timestamp}-assistant`;
+    const nextMessages = [
+      ...messages,
+      userMessage,
+      { id: assistantMessageId, role: 'assistant' as const, text: '', pending: true },
+    ];
+
+    setMessages(nextMessages);
+    setDraft('');
+
+    await streamAssistantResponse(nextMessages, assistantMessageId);
+  }
+
+  async function copyMessageText(message: Message) {
+    if (!message.text.trim()) {
+      return;
+    }
+
+    await Clipboard.setStringAsync(message.text);
+    setCopiedMessageId(message.id);
+    void Haptics.selectionAsync();
+  }
+
+  async function regenerateLatestAssistantResponse() {
+    if (isSending) {
+      return;
+    }
+
+    const lastAssistantIndex = [...messages]
+      .map((message, index) => ({ message, index }))
+      .reverse()
+      .find(({ message }) => message.role === 'assistant')?.index;
+
+    if (lastAssistantIndex === undefined) {
+      return;
+    }
+
+    const userIndex = messages
+      .slice(0, lastAssistantIndex)
+      .map((message, index) => ({ message, index }))
+      .reverse()
+      .find(({ message }) => message.role === 'user')?.index;
+
+    if (userIndex === undefined) {
+      return;
+    }
+
+    const assistantMessageId = `${Date.now()}-assistant`;
+    const nextMessages = [
+      ...messages.slice(0, userIndex + 1),
+      { id: assistantMessageId, role: 'assistant' as const, text: '', pending: true },
+    ];
+
+    setMessages(nextMessages);
+    void Haptics.selectionAsync();
+
+    await streamAssistantResponse(nextMessages, assistantMessageId);
+  }
+
+  const lastAssistantMessageId = React.useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === 'assistant') {
+        return messages[index]?.id ?? null;
+      }
+    }
+
+    return null;
+  }, [messages]);
+
   return (
     <StyledSafeAreaView className="bg-background flex-1">
       <KeyboardAvoidingView behavior="padding" className="flex-1">
@@ -169,13 +246,21 @@ export function ChatScreen() {
               className="flex-1"
               contentContainerStyle={{
                 flexGrow: 1,
-                gap: 12,
+                gap: 16,
                 justifyContent: 'flex-end',
                 paddingVertical: 24,
               }}
               keyboardShouldPersistTaps="handled">
               {messages.map((message) => (
-                <ChatBubble key={message.id} message={message} />
+                <ChatBubble
+                  key={message.id}
+                  message={message}
+                  copied={copiedMessageId === message.id}
+                  showActions={message.id === lastAssistantMessageId}
+                  onCopy={() => void copyMessageText(message)}
+                  onRegenerate={() => void regenerateLatestAssistantResponse()}
+                  isSending={isSending}
+                />
               ))}
             </ScrollView>
           )}
@@ -213,22 +298,58 @@ export function ChatScreen() {
   );
 }
 
-function ChatBubble({ message }: { message: Message }) {
+function ChatBubble({
+  message,
+  copied,
+  showActions,
+  onCopy,
+  onRegenerate,
+  isSending,
+}: {
+  message: Message;
+  copied: boolean;
+  showActions: boolean;
+  onCopy: () => void;
+  onRegenerate: () => void;
+  isSending: boolean;
+}) {
   const isUser = message.role === 'user';
   const displayText = message.text || (message.pending ? 'Thinking...' : '');
 
   return (
-    <View className={isUser ? 'items-end' : 'items-start'}>
-      <View
-        className={
-          isUser
-            ? 'bg-primary max-w-[85%] rounded-2xl px-4 py-3'
-            : 'bg-muted max-w-[85%] rounded-2xl px-4 py-3'
-        }>
-        <Text className={isUser ? 'text-primary-foreground' : 'text-foreground'}>
-          {displayText}
-        </Text>
+    <View className={isUser ? 'items-end' : 'items-stretch'}>
+      <View className={isUser ? 'bg-primary max-w-[85%] rounded-full px-4 py-2.5' : 'w-full py-1 px-1'}>
+        {isUser ? (
+          <Text className="text-primary-foreground">{displayText}</Text>
+        ) : (
+          <MarkdownText>{displayText}</MarkdownText>
+        )}
       </View>
+
+      {!isUser && showActions ? (
+        <View className="mt-1 flex-row items-center gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 rounded-lg"
+            onPress={onCopy}
+            accessibilityLabel={copied ? 'Copied response' : 'Copy response'}>
+            <Icon
+              as={Copy}
+              className={copied ? 'text-foreground size-4' : 'text-muted-foreground size-4'}
+            />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 rounded-lg"
+            disabled={isSending}
+            onPress={onRegenerate}
+            accessibilityLabel="Regenerate response">
+            <Icon as={RotateCw} className="text-muted-foreground size-4" />
+          </Button>
+        </View>
+      ) : null}
     </View>
   );
 }

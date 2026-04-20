@@ -23,7 +23,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
         {...props}
         contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: 16 }}>
         <View className="px-4 pb-4 flex-row items-center gap-2">
-          <Icon className="size-6" as={Bird} />
+          <Icon className="size-6 text-primary" as={Bird} />
           <Text className="text-2xl font-semibold tracking-tight">OpenBird</Text>
         </View>
 

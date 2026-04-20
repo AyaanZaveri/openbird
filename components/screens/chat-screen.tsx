@@ -4,6 +4,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
+import { ModelBottomSheet } from '@/components/model-bottom-sheet';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { MarkdownText } from '@/components/ui/markdown';
@@ -12,28 +13,52 @@ import { Text } from '@/components/ui/text';
 import {
   defaultSettings,
   loadProviderSettings,
+  saveProviderSettings,
   settingsSchema,
   type SettingsForm,
 } from '@/lib/provider-settings';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { streamText } from 'ai';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { fetch as expoFetch } from 'expo/fetch';
 import * as Haptics from 'expo-haptics';
-import { Bird, Brain, Copy, Menu, RotateCw, SendHorizontal } from 'lucide-react-native';
+import {
+  Bird,
+  Brain,
+  ChevronDown,
+  Copy,
+  Hourglass,
+  ImagePlus,
+  Menu,
+  RotateCw,
+  SendHorizontal,
+  Timer,
+  X,
+} from 'lucide-react-native';
 import * as React from 'react';
-import { Platform, ScrollView, View } from 'react-native';
+import { Alert, Image, Platform, Pressable, ScrollView, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { withUniwind } from 'uniwind';
+
+type Attachment = {
+  id: string;
+  filename: string;
+  mediaType: string;
+  previewUri: string;
+  base64: string;
+};
 
 type Message = {
   id: string;
   role: 'assistant' | 'user';
   text: string;
+  attachments?: Attachment[];
   reasoning?: string;
   pending?: boolean;
+  responseTimeMs?: number;
 };
 
 const StyledSafeAreaView = withUniwind(SafeAreaView);
@@ -43,10 +68,12 @@ export function ChatScreen() {
   const router = useRouter();
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [draft, setDraft] = React.useState('');
+  const [attachments, setAttachments] = React.useState<Attachment[]>([]);
   const [settings, setSettings] = React.useState<SettingsForm>(defaultSettings);
   const [chatError, setChatError] = React.useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null);
   const [isSending, setIsSending] = React.useState(false);
+  const [isModelSheetOpen, setIsModelSheetOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (!copiedMessageId) {
@@ -78,6 +105,8 @@ export function ChatScreen() {
   );
 
   async function streamAssistantResponse(nextMessages: Message[], assistantMessageId: string) {
+    const startedAt = Date.now();
+
     const parsedSettings = settingsSchema.safeParse(settings);
     if (!parsedSettings.success) {
       setChatError(parsedSettings.error.issues[0]?.message ?? 'Update your provider settings.');
@@ -99,11 +128,31 @@ export function ChatScreen() {
       const result = streamText({
         model: provider(parsedSettings.data.model),
         messages: nextMessages
-          .filter((message) => message.text.trim().length > 0)
-          .map((message) => ({
-            role: message.role,
-            content: [{ type: 'text' as const, text: message.text }],
-          })),
+          .filter(
+            (message) => message.text.trim().length > 0 || (message.attachments?.length ?? 0) > 0
+          )
+          .map((message) => {
+            if (message.role === 'user') {
+              return {
+                role: 'user' as const,
+                content: [
+                  ...(message.text.trim().length > 0
+                    ? [{ type: 'text' as const, text: message.text }]
+                    : []),
+                  ...(message.attachments ?? []).map((attachment) => ({
+                    type: 'image' as const,
+                    image: attachment.base64,
+                    mediaType: attachment.mediaType,
+                  })),
+                ],
+              };
+            }
+
+            return {
+              role: 'assistant' as const,
+              content: message.text,
+            };
+          }),
       });
 
       for await (const part of result.fullStream) {
@@ -154,23 +203,96 @@ export function ChatScreen() {
                 ...entry,
                 pending: false,
                 text: entry.text || 'Unable to generate a response.',
+                responseTimeMs: Date.now() - startedAt,
               }
             : entry
         )
       );
+      return;
     } finally {
       setIsSending(false);
     }
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === assistantMessageId
+          ? {
+              ...message,
+              responseTimeMs: Date.now() - startedAt,
+            }
+          : message
+      )
+    );
+  }
+
+  async function pickImages() {
+    if (isSending) {
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        selectionLimit: 10,
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (result.canceled || result.assets.length === 0) {
+        return;
+      }
+
+      const nextAttachments = result.assets.map((asset, index) => {
+        const base64 = asset.base64;
+
+        if (!base64) {
+          throw new Error('The selected image could not be encoded for upload.');
+        }
+
+        return {
+          id: asset.assetId ?? `${asset.uri}-${Date.now()}-${index}`,
+          filename: asset.fileName ?? `image-${Date.now()}-${index + 1}.jpg`,
+          mediaType: asset.mimeType ?? 'image/jpeg',
+          previewUri: asset.uri,
+          base64,
+        } satisfies Attachment;
+      });
+
+      setAttachments((current) => {
+        const deduped = new Map(current.map((attachment) => [attachment.id, attachment]));
+
+        for (const attachment of nextAttachments) {
+          deduped.set(attachment.id, attachment);
+        }
+
+        return [...deduped.values()];
+      });
+    } catch (error) {
+      Alert.alert(
+        'Unable to add images',
+        error instanceof Error ? error.message : 'Please try again.'
+      );
+    }
+  }
+
+  function removeAttachment(attachmentId: string) {
+    setAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
   }
 
   async function sendMessage() {
     const value = draft.trim();
-    if (!value || isSending) {
+    if ((!value && attachments.length === 0) || isSending) {
       return;
     }
 
     const timestamp = Date.now();
-    const userMessage: Message = { id: `${timestamp}-user`, role: 'user', text: value };
+    const userMessage: Message = {
+      id: `${timestamp}-user`,
+      role: 'user',
+      text: value,
+      attachments,
+    };
     const assistantMessageId = `${timestamp}-assistant`;
     const nextMessages = [
       ...messages,
@@ -186,6 +308,7 @@ export function ChatScreen() {
 
     setMessages(nextMessages);
     setDraft('');
+    setAttachments([]);
 
     await streamAssistantResponse(nextMessages, assistantMessageId);
   }
@@ -242,6 +365,13 @@ export function ChatScreen() {
     await streamAssistantResponse(nextMessages, assistantMessageId);
   }
 
+  async function selectModel(model: string) {
+    const nextSettings = { ...settings, model };
+    setSettings(nextSettings);
+    await saveProviderSettings(nextSettings);
+    void Haptics.selectionAsync();
+  }
+
   const lastAssistantMessageId = React.useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (messages[index]?.role === 'assistant') {
@@ -270,9 +400,16 @@ export function ChatScreen() {
                 <Icon as={Bird} className="text-primary size-5" />
                 <Text className="text-lg font-semibold tracking-tight">OpenBird</Text>
               </View>
-              <Text className="text-muted-foreground font-mono text-sm tracking-tight">
-                {settings.model ? settings.model : 'Choose a provider to get started.'}
-              </Text>
+              <Pressable
+                className="mt-0.5 flex-row items-center gap-1 self-start"
+                onPress={() => setIsModelSheetOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Choose model">
+                <Text className="text-muted-foreground font-mono text-sm tracking-tight">
+                  {settings.model ? settings.model : 'Choose a provider to get started.'}
+                </Text>
+                <Icon as={ChevronDown} className="text-muted-foreground size-3.5" />
+              </Pressable>
             </View>
           </View>
 
@@ -311,6 +448,29 @@ export function ChatScreen() {
 
           <View className="-mx-4 mt-4 px-4">
             <View className="border-border/70 bg-background rounded-[1.25rem] border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
+              {attachments.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  className="mb-3"
+                  contentContainerStyle={{ gap: 12 }}
+                  showsHorizontalScrollIndicator={false}>
+                  {attachments.map((attachment) => (
+                    <View key={attachment.id} className="relative">
+                      <Image
+                        source={{ uri: attachment.previewUri }}
+                        className="bg-muted size-18 rounded-xl"
+                      />
+                      <Pressable
+                        className="bg-background/90 absolute top-1 right-1 items-center justify-center rounded-full p-1"
+                        onPress={() => removeAttachment(attachment.id)}
+                        accessibilityLabel={`Remove ${attachment.filename}`}>
+                        <Icon as={X} className="size-3.5" />
+                      </Pressable>
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : null}
+
               <Textarea
                 value={draft}
                 onChangeText={setDraft}
@@ -325,7 +485,17 @@ export function ChatScreen() {
                 blurOnSubmit={false}
               />
 
-              <View className="mt-2 flex-row items-center justify-end">
+              <View className="mt-2 flex-row items-center justify-between">
+                <Button
+                  size="icon"
+                  variant="secondary"
+                  className="size-9 rounded-full"
+                  disabled={isSending}
+                  onPress={() => void pickImages()}
+                  accessibilityLabel="Add images">
+                  <Icon as={ImagePlus} className="text-secondary-foreground size-4.5" />
+                </Button>
+
                 <Button
                   size="icon"
                   className="size-9 rounded-full"
@@ -339,6 +509,14 @@ export function ChatScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <ModelBottomSheet
+        open={isModelSheetOpen}
+        onOpenChange={setIsModelSheetOpen}
+        settings={settings}
+        value={settings.model}
+        onSelect={(model) => void selectModel(model)}
+      />
     </StyledSafeAreaView>
   );
 }
@@ -361,15 +539,40 @@ function ChatBubble({
   const isUser = message.role === 'user';
   const displayText = message.text || (message.pending ? 'Thinking...' : '');
   const reasoningText = message.reasoning?.trim();
+  const responseTimeLabel =
+    message.responseTimeMs !== undefined ? `${(message.responseTimeMs / 1000).toFixed(1)}s` : null;
 
   return (
     <View className={isUser ? 'items-end' : 'items-stretch'}>
+      {message.attachments?.length ? (
+        <View
+          className={
+            isUser
+              ? 'mb-2 max-w-[85%] flex-row flex-wrap justify-end gap-2'
+              : 'mb-2 flex-row flex-wrap gap-2'
+          }>
+          {message.attachments.map((attachment) => (
+            <Image
+              key={attachment.id}
+              source={{ uri: attachment.previewUri }}
+              className="bg-background/10 size-32 rounded-2xl"
+            />
+          ))}
+        </View>
+      ) : null}
+
       <View
-        className={isUser ? 'bg-primary max-w-[85%] rounded-full px-4 py-2.5' : 'w-full px-1 py-1'}>
+        className={
+          isUser
+            ? message.attachments?.length
+              ? 'bg-accent max-w-[85%] rounded-full px-4 py-2.5'
+              : 'bg-accent max-w-[85%] rounded-full px-4 py-2.5'
+            : 'w-full px-1 py-1'
+        }>
         {!isUser && reasoningText ? (
           <Accordion type="single" collapsible className="mb-2">
             <AccordionItem value={`reasoning-${message.id}`} className="border-0">
-              <AccordionTrigger className="rounded-lg pr-1 py-2">
+              <AccordionTrigger className="rounded-lg py-2 pr-1">
                 <View className="flex-row items-center gap-2">
                   <Icon as={Brain} className="text-accent-foreground size-4" />
                   <Text className="text-accent-foreground text-sm font-medium">Reasoning</Text>
@@ -382,11 +585,13 @@ function ChatBubble({
           </Accordion>
         ) : null}
 
-        {isUser ? (
-          <Text className="text-primary-foreground">{displayText}</Text>
-        ) : (
-          <MarkdownText>{displayText}</MarkdownText>
-        )}
+        {displayText ? (
+          isUser ? (
+            <Text>{displayText}</Text>
+          ) : (
+            <MarkdownText>{displayText}</MarkdownText>
+          )
+        ) : null}
       </View>
 
       {!isUser && showActions ? (
@@ -411,6 +616,14 @@ function ChatBubble({
             accessibilityLabel="Regenerate response">
             <Icon as={RotateCw} className="text-muted-foreground size-4" />
           </Button>
+          {responseTimeLabel ? (
+            <View className="flex-row items-center gap-2 px-1.5">
+              <Icon as={Timer} className="text-muted-foreground/70 size-4" />
+              <Text className="text-muted-foreground/70 font-mono text-sm">
+                {responseTimeLabel}
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : null}
     </View>

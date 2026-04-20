@@ -3,8 +3,10 @@ import { cn } from '@/lib/utils';
 import { THEME } from '@/lib/theme';
 import {
   BottomSheetBackdrop as BottomSheetBackdropPrimitive,
+  BottomSheetFlatList as BottomSheetFlatListPrimitive,
   BottomSheetFooter as BottomSheetFooterPrimitive,
   BottomSheetModal as BottomSheetModalPrimitive,
+  BottomSheetScrollView as BottomSheetScrollViewPrimitive,
   BottomSheetTextInput as BottomSheetTextInputPrimitive,
   BottomSheetView,
   type BottomSheetBackdropProps,
@@ -13,6 +15,7 @@ import {
 } from '@gorhom/bottom-sheet';
 import * as React from 'react';
 import {
+  Platform,
   StyleSheet,
   View,
   type StyleProp,
@@ -38,11 +41,13 @@ const BottomSheet = React.forwardRef<BottomSheetModalPrimitive, BottomSheetModal
       keyboardBehavior = 'interactive',
       keyboardBlurBehavior = 'restore',
       enableBlurKeyboardOnGesture = true,
+      topInset,
       ...props
     },
     ref
   ) => {
     const { theme } = useUniwind();
+    const { top } = useSafeAreaInsets();
     const palette = THEME[theme ?? 'light'];
 
     const renderBackdrop = React.useCallback(
@@ -80,6 +85,7 @@ const BottomSheet = React.forwardRef<BottomSheetModalPrimitive, BottomSheetModal
         ]}
         keyboardBehavior={keyboardBehavior}
         keyboardBlurBehavior={keyboardBlurBehavior}
+        topInset={topInset ?? top}
         {...props}>
         {children}
       </BottomSheetModalPrimitive>
@@ -94,10 +100,12 @@ function BottomSheetContent({
   style,
   ...props
 }: React.ComponentProps<typeof BottomSheetView>) {
+  const { bottom } = useSafeAreaInsets();
+
   return (
     <BottomSheetView
       className={cn('px-5 pt-1', className)}
-      style={[{ paddingBottom: 24 }, style]}
+      style={[{ paddingBottom: bottom + 24 }, style]}
       {...props}
     />
   );
@@ -148,13 +156,25 @@ function BottomSheetInput({ style, placeholderTextColor, ...props }: TextInputPr
           backgroundColor: palette.background,
           borderColor: palette.input,
           color: palette.foreground,
-          fontFamily: 'Geist_400Regular',
+          fontFamily: 'Inter_400Regular',
         },
         style,
       ]}
       {...props}
     />
   );
+}
+
+function BottomSheetScrollView({
+  ...props
+}: React.ComponentProps<typeof BottomSheetScrollViewPrimitive>) {
+  return <BottomSheetScrollViewPrimitive {...props} />;
+}
+
+function BottomSheetFlatList<ItemT>({
+  ...props
+}: React.ComponentProps<typeof BottomSheetFlatListPrimitive<ItemT>>) {
+  return <BottomSheetFlatListPrimitive {...props} />;
 }
 
 const styles = StyleSheet.create({
@@ -165,7 +185,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
-    lineHeight: 20,
+    lineHeight: Platform.OS === 'ios' ? 20 : 22,
+    paddingTop: Platform.OS === 'ios' ? 8 : 10,
+    paddingBottom: Platform.OS === 'ios' ? 10 : 10,
   },
 });
 
@@ -173,9 +195,11 @@ export {
   BottomSheet,
   BottomSheetContent,
   BottomSheetDescription,
+  BottomSheetFlatList,
   BottomSheetFooter,
   BottomSheetFooterActions,
   BottomSheetHeader,
   BottomSheetInput,
+  BottomSheetScrollView,
   BottomSheetTitle,
 };

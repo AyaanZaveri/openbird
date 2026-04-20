@@ -1,16 +1,20 @@
 import { Button } from '@/components/ui/button';
+import { ModelBottomSheet } from '@/components/model-bottom-sheet';
+import {
+  BottomSheet,
+  BottomSheetContent,
+  BottomSheetDescription,
+  BottomSheetHeader,
+  BottomSheetTitle,
+} from '@/components/ui/bottom-sheet';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Text } from '@/components/ui/text';
 import {
   defaultSettings,
-  getFuzzyModelScore,
-  loadAvailableModels,
   loadProviderSettings,
   saveProviderSettings,
   settingsSchema,
-  type ModelOption,
   type SettingsForm,
 } from '@/lib/provider-settings';
 import {
@@ -20,11 +24,13 @@ import {
 } from '@/lib/theme-preferences';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, RotateCwIcon } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Eclipse, Moon, Box, Sun, SunMoon } from 'lucide-react-native';
 import * as React from 'react';
-import { InteractionManager, Pressable, ScrollView, View } from 'react-native';
+import { InteractionManager, ScrollView, View } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Uniwind, useUniwind, withUniwind } from 'uniwind';
+import { BlurView } from 'expo-blur';
 
 const StyledSafeAreaView = withUniwind(SafeAreaView);
 
@@ -32,50 +38,27 @@ export function SettingsScreen() {
   const router = useRouter();
   const { theme, hasAdaptiveThemes } = useUniwind();
   const insets = useSafeAreaInsets();
-  const modelBlurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [settings, setSettings] = React.useState<SettingsForm>(defaultSettings);
   const [settingsError, setSettingsError] = React.useState<string | null>(null);
-  const [availableModels, setAvailableModels] = React.useState<ModelOption[]>([]);
-  const [isLoadingModels, setIsLoadingModels] = React.useState(false);
-  const [modelLoadError, setModelLoadError] = React.useState<string | null>(null);
-  const [isModelInputFocused, setIsModelInputFocused] = React.useState(false);
   const [themePreference, setThemePreference] = React.useState<ThemePreference>('system');
   const [hasLoadedInitialState, setHasLoadedInitialState] = React.useState(false);
+  const [isThemeSheetOpen, setIsThemeSheetOpen] = React.useState(false);
+  const [isModelSheetOpen, setIsModelSheetOpen] = React.useState(false);
+  const themeBottomSheetRef = React.useRef<any>(null);
+
+  React.useEffect(() => {
+    if (isThemeSheetOpen) {
+      themeBottomSheetRef.current?.present();
+    } else {
+      themeBottomSheetRef.current?.dismiss();
+    }
+  }, [isThemeSheetOpen]);
 
   const activeThemePreference = hasAdaptiveThemes
     ? 'system'
     : themePreference === 'system'
       ? theme
       : themePreference;
-
-  const modelOptions = React.useMemo(() => {
-    if (!settings.model || availableModels.some((model) => model.value === settings.model)) {
-      return availableModels;
-    }
-
-    return [{ label: settings.model, value: settings.model }, ...availableModels];
-  }, [availableModels, settings.model]);
-
-  const filteredModelOptions = React.useMemo(() => {
-    const query = settings.model.trim();
-
-    return modelOptions
-      .map((model) => ({ model, score: getFuzzyModelScore(query, model) }))
-      .filter((entry): entry is { model: ModelOption; score: number } => entry.score !== null)
-      .sort((left, right) => {
-        if (left.score !== right.score) {
-          return left.score - right.score;
-        }
-
-        return left.model.label.localeCompare(right.model.label);
-      })
-      .slice(0, 5)
-      .map((entry) => entry.model);
-  }, [modelOptions, settings.model]);
-
-  const shouldShowModelSuggestions =
-    isModelInputFocused &&
-    (filteredModelOptions.length > 0 || isLoadingModels || Boolean(modelLoadError));
 
   React.useEffect(() => {
     let cancelled = false;
@@ -94,37 +77,8 @@ export function SettingsScreen() {
     return () => {
       cancelled = true;
       task.cancel();
-      if (modelBlurTimeoutRef.current) {
-        clearTimeout(modelBlurTimeoutRef.current);
-      }
     };
   }, []);
-
-  React.useEffect(() => {
-    if (!hasLoadedInitialState) {
-      return;
-    }
-
-    let interactionTask: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
-    const timer = setTimeout(() => {
-      interactionTask = InteractionManager.runAfterInteractions(() => {
-        void refreshModels(settings);
-      });
-    }, 350);
-
-    return () => {
-      clearTimeout(timer);
-      interactionTask?.cancel();
-    };
-  }, [hasLoadedInitialState, settings.apiKey, settings.baseUrl]);
-
-  async function refreshModels(form: SettingsForm) {
-    setIsLoadingModels(true);
-    const result = await loadAvailableModels(form);
-    setAvailableModels(result.models);
-    setModelLoadError(result.error);
-    setIsLoadingModels(false);
-  }
 
   async function saveSettings() {
     const parsedSettings = settingsSchema.safeParse(settings);
@@ -150,196 +104,199 @@ export function SettingsScreen() {
     await saveThemePreference(nextThemePreference);
   }
 
+  function openModelSheet() {
+    setIsModelSheetOpen(true);
+  }
+
+  function selectModel(modelValue: string) {
+    setSettingsError(null);
+    setSettings((current) => ({ ...current, model: modelValue }));
+  }
+
   return (
     <>
       <StyledSafeAreaView className="bg-background flex-1" edges={['left', 'right', 'bottom']}>
-        <View
-          className="border-border bg-background flex-row items-center gap-2 px-4 pb-3"
-          style={{ paddingTop: insets.top + 8 }}>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="rounded-xl"
-            onPress={() => router.back()}
-            accessibilityLabel="Go back">
-            <Icon as={ChevronLeft} className="text-foreground size-6" />
-          </Button>
-          <Text className="text-xl font-medium tracking-tight">Settings</Text>
-        </View>
+        <KeyboardAvoidingView behavior="padding" className="flex-1">
+          <View
+            className="border-border bg-background flex-row items-center gap-2 px-4 pb-3"
+            style={{ paddingTop: insets.top + 8 }}>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="rounded-xl"
+              onPress={() => router.back()}
+              accessibilityLabel="Go back">
+              <Icon as={ChevronLeft} className="text-foreground size-6" />
+            </Button>
+            <Text className="text-xl font-medium tracking-tight">Settings</Text>
+          </View>
 
-        <ScrollView
-          className="flex-1"
-          contentContainerStyle={{ padding: 16, paddingTop: 16, gap: 24 }}>
-          <View className="gap-4">
-            <View className="gap-3">
-              <View className="gap-1">
-                <Text className="text-lg font-semibold">Appearance</Text>
+          <ScrollView
+            className="flex-1"
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: 16, paddingTop: 16, paddingBottom: 32, gap: 24 }}>
+            <View className="gap-4">
+              <View className="gap-3">
+                <View className="gap-1">
+                  <View className="flex-row items-center gap-2">
+                    <Icon as={Eclipse} className="text-foreground size-5" />
+                    <Text className="text-lg font-medium">Appearance</Text>
+                  </View>
+                  <Text className="text-muted-foreground text-sm">
+                    Choose between system, light, or dark theme.
+                  </Text>
+                </View>
+
+                <Button
+                  variant="outline"
+                  className="w-full justify-between"
+                  onPress={() => setIsThemeSheetOpen(true)}>
+                  <View className="flex-row items-center gap-2">
+                    <Icon
+                      as={
+                        activeThemePreference === 'dark'
+                          ? Moon
+                          : activeThemePreference === 'light'
+                            ? Sun
+                            : SunMoon
+                      }
+                      className="text-foreground size-4"
+                    />
+                    <Text className="font-normal capitalize">{activeThemePreference}</Text>
+                  </View>
+                  <Icon as={ChevronRight} className="text-muted-foreground size-4" />
+                </Button>
+              </View>
+
+              <View className="mt-2 gap-1">
+                <View className="flex-row items-center gap-2">
+                  <Icon as={Box} className="text-foreground size-5" />
+                  <Text className="text-lg font-medium">Provider</Text>
+                </View>
                 <Text className="text-muted-foreground text-sm">
-                  Choose whether the app follows the system theme or stays fixed.
+                  Configure the endpoint, key, and model.
                 </Text>
               </View>
 
-              <Tabs
-                value={activeThemePreference}
-                onValueChange={(value) => void selectTheme(value as ThemePreference)}>
-                <TabsList>
-                  <TabsTrigger value="system">
-                    <Text
-                      className={
-                        activeThemePreference === 'system' ? 'text-primary-foreground' : ''
-                      }>
-                      System
-                    </Text>
-                  </TabsTrigger>
-                  <TabsTrigger value="light">
-                    <Text
-                      className={
-                        activeThemePreference === 'light' ? 'text-primary-foreground' : ''
-                      }>
-                      Light
-                    </Text>
-                  </TabsTrigger>
-                  <TabsTrigger value="dark">
-                    <Text
-                      className={activeThemePreference === 'dark' ? 'text-primary-foreground' : ''}>
-                      Dark
-                    </Text>
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </View>
+              <View className="gap-2">
+                <Text className="text-sm font-medium">Base URL</Text>
+                <Input
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  placeholder="https://api.openai.com/v1"
+                  value={settings.baseUrl}
+                  onChangeText={(value) => {
+                    setSettingsError(null);
+                    setSettings((current) => ({ ...current, baseUrl: value }));
+                  }}
+                />
+              </View>
 
-            <View className="gap-1">
-              <Text className="text-lg font-semibold">Provider</Text>
-              <Text className="text-muted-foreground text-sm">
-                Configure the endpoint, key, and model the chat screen should use.
-              </Text>
-            </View>
+              <View className="gap-2">
+                <Text className="text-sm font-medium">API Key</Text>
+                <Input
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  placeholder="sk-..."
+                  value={settings.apiKey}
+                  onChangeText={(value) => {
+                    setSettingsError(null);
+                    setSettings((current) => ({ ...current, apiKey: value }));
+                  }}
+                />
+              </View>
 
-            <View className="gap-2">
-              <Text className="text-sm font-medium">Base URL</Text>
-              <Input
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                placeholder="https://api.openai.com/v1"
-                value={settings.baseUrl}
-                onChangeText={(value) => {
-                  setSettingsError(null);
-                  setSettings((current) => ({ ...current, baseUrl: value }));
-                }}
-              />
-            </View>
-
-            <View className="gap-2">
-              <Text className="text-sm font-medium">API Key</Text>
-              <Input
-                autoCapitalize="none"
-                autoCorrect={false}
-                secureTextEntry
-                placeholder="sk-..."
-                value={settings.apiKey}
-                onChangeText={(value) => {
-                  setSettingsError(null);
-                  setSettings((current) => ({ ...current, apiKey: value }));
-                }}
-              />
-            </View>
-
-            <View className="gap-2">
-              <Text className="text-sm font-medium">Model</Text>
-              <View className="relative z-20">
-                {shouldShowModelSuggestions ? (
-                  <View className="border-border bg-card absolute top-full right-0 left-0 mt-2 max-h-52 overflow-hidden rounded-xl border shadow-lg shadow-black/5">
-                    <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
-                      {isLoadingModels ? (
-                        <View className="px-3 py-3">
-                          <Text className="text-muted-foreground text-sm">
-                            Loading models from your provider...
-                          </Text>
-                        </View>
-                      ) : null}
-
-                      {!isLoadingModels && modelLoadError ? (
-                        <View className="px-3 py-3">
-                          <Text className="text-muted-foreground text-sm">{modelLoadError}</Text>
-                        </View>
-                      ) : null}
-
-                      {!isLoadingModels && !modelLoadError
-                        ? filteredModelOptions.map((model) => (
-                            <Pressable
-                              key={model.value}
-                              className="active:bg-accent border-border border-b px-3 py-3 last:border-b-0"
-                              onPress={() => {
-                                if (modelBlurTimeoutRef.current) {
-                                  clearTimeout(modelBlurTimeoutRef.current);
-                                }
-
-                                setSettingsError(null);
-                                setSettings((current) => ({ ...current, model: model.value }));
-                                setIsModelInputFocused(false);
-                              }}>
-                              <Text className="text-sm">{model.label}</Text>
-                            </Pressable>
-                          ))
-                        : null}
-                    </ScrollView>
-                  </View>
-                ) : null}
-
-                <View className="w-full gap-2">
-                  <Input
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    placeholder={
-                      isLoadingModels ? 'Loading models...' : 'Search or enter a model ID'
-                    }
-                    value={settings.model}
-                    onFocus={() => {
-                      if (modelBlurTimeoutRef.current) {
-                        clearTimeout(modelBlurTimeoutRef.current);
-                      }
-
-                      setIsModelInputFocused(true);
-                    }}
-                    onBlur={() => {
-                      modelBlurTimeoutRef.current = setTimeout(() => {
-                        setIsModelInputFocused(false);
-                      }, 120);
-                    }}
-                    onChangeText={(value) => {
-                      setSettingsError(null);
-                      setIsModelInputFocused(true);
-                      setSettings((current) => ({ ...current, model: value }));
-                    }}
-                    className="w-full"
-                  />
+              <View className="gap-2">
+                <Text className="text-sm font-medium">Model</Text>
+                <View className="flex flex-row items-center gap-2">
                   <Button
                     variant="outline"
-                    size="sm"
-                    onPress={() => void refreshModels(settings)}
-                    className="w-full">
-                    <Icon as={RotateCwIcon} className="text-foreground mr-2 size-4" />
-                    <Text>Refresh Models</Text>
+                    className="min-w-0 flex-1 justify-between"
+                    onPress={openModelSheet}>
+                    <Text
+                      className={
+                        settings.model
+                          ? 'shrink pr-2 font-normal'
+                          : 'text-muted-foreground shrink pr-2'
+                      }
+                      numberOfLines={1}>
+                      {settings.model || 'Choose a model'}
+                    </Text>
+                    <Icon as={ChevronRight} className="text-muted-foreground size-4" />
                   </Button>
                 </View>
               </View>
             </View>
-          </View>
 
-          {settingsError ? <Text className="text-destructive text-sm">{settingsError}</Text> : null}
+            {settingsError ? (
+              <Text className="text-destructive text-sm">{settingsError}</Text>
+            ) : null}
 
-          <View className="mt-2 flex-row gap-2">
-            <Button variant="outline" className="flex-1" onPress={() => router.back()}>
-              <Text>Cancel</Text>
-            </Button>
-            <Button className="flex-1" onPress={() => void saveSettings()}>
-              <Text>Save</Text>
-            </Button>
-          </View>
-        </ScrollView>
+            <View className="mt-2 flex-row gap-2">
+              <Button variant="outline" className="flex-1" onPress={() => router.back()}>
+                <Text>Cancel</Text>
+              </Button>
+              <Button className="flex-1" onPress={() => void saveSettings()}>
+                <Text>Save</Text>
+              </Button>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </StyledSafeAreaView>
+
+      <BottomSheet
+        ref={themeBottomSheetRef}
+        onDismiss={() => setIsThemeSheetOpen(false)}
+        enableDynamicSizing>
+        <BottomSheetContent>
+          <BottomSheetHeader>
+            <BottomSheetTitle>Choose Theme</BottomSheetTitle>
+            <BottomSheetDescription>Select your preferred appearance</BottomSheetDescription>
+          </BottomSheetHeader>
+          <View className="mt-4 gap-2">
+            <Button
+              variant={activeThemePreference === 'system' ? 'default' : 'outline'}
+              className="w-full justify-start"
+              onPress={() => {
+                void selectTheme('system');
+                setIsThemeSheetOpen(false);
+              }}>
+              <Icon as={SunMoon} className="mr-2 size-4" />
+              <Text>System</Text>
+            </Button>
+            <Button
+              variant={activeThemePreference === 'light' ? 'default' : 'outline'}
+              className="w-full justify-start"
+              onPress={() => {
+                void selectTheme('light');
+                setIsThemeSheetOpen(false);
+              }}>
+              <Icon as={Sun} className="mr-2 size-4" />
+              <Text>Light</Text>
+            </Button>
+            <Button
+              variant={activeThemePreference === 'dark' ? 'default' : 'outline'}
+              className="w-full justify-start"
+              onPress={() => {
+                void selectTheme('dark');
+                setIsThemeSheetOpen(false);
+              }}>
+              <Icon as={Moon} className="mr-2 size-4" />
+              <Text>Dark</Text>
+            </Button>
+          </View>
+        </BottomSheetContent>
+      </BottomSheet>
+
+      <ModelBottomSheet
+        open={isModelSheetOpen}
+        onOpenChange={setIsModelSheetOpen}
+        settings={settings}
+        value={settings.model}
+        onSelect={selectModel}
+      />
     </>
   );
 }

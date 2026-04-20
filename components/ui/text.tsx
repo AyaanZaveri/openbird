@@ -6,7 +6,7 @@ import { Platform, Text as RNText, type Role } from 'react-native';
 
 const textVariants = cva(
   cn(
-    'text-foreground text-base',
+    'text-foreground text-base leading-5',
     Platform.select({
       web: 'select-text',
     })
@@ -65,11 +65,11 @@ const ARIA_LEVEL: Partial<Record<TextVariant, string>> = {
 const TextClassContext = React.createContext<string | undefined>(undefined);
 
 const FONT_FAMILY = {
-  regular: 'Geist_400Regular',
-  medium: 'Geist_500Medium',
-  semibold: 'Geist_600SemiBold',
-  bold: 'Geist_700Bold',
-  extrabold: 'Geist_800ExtraBold',
+  regular: 'Inter_400Regular',
+  medium: 'Inter_500Medium',
+  semibold: 'Inter_600SemiBold',
+  bold: 'Inter_700Bold',
+  extrabold: 'Inter_800ExtraBold',
   mono: 'GeistMono_400Regular',
 } as const;
 

@@ -13,7 +13,7 @@ function Input({ className, placeholderTextColor, style, ...props }: InputProps)
   return (
     <TextInput
       className={cn(
-        'border-input bg-background text-foreground placeholder:text-muted-foreground h-11 rounded-md border px-3 py-2 text-base',
+        'border-input bg-background text-foreground placeholder:text-muted-foreground min-h-11 rounded-md border px-3 py-2.5 text-base',
         Platform.select({
           web: 'ring-offset-background focus-visible:border-ring focus-visible:ring-ring/50 outline-none focus-visible:ring-[3px]',
         }),
@@ -23,7 +23,15 @@ function Input({ className, placeholderTextColor, style, ...props }: InputProps)
       cursorColor={foregroundColor}
       placeholderTextColor={placeholderTextColor ?? '#8a8a8a'}
       selectionColor={foregroundColor}
-      style={[{ fontFamily: 'Geist_400Regular' }, style]}
+      style={[
+        {
+          fontFamily: 'Inter_400Regular',
+          lineHeight: Platform.OS === 'ios' ? 20 : 22,
+          paddingTop: Platform.OS === 'ios' ? 8 : undefined,
+          paddingBottom: Platform.OS === 'ios' ? 10 : undefined,
+        },
+        style,
+      ]}
       {...props}
     />
   );

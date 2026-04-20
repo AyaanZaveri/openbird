@@ -26,11 +26,11 @@ function Textarea({
         props.editable === false && 'opacity-50',
         className
       )}
-      cursorColor={foregroundColor}
+      cursorColor={'#abab9c'}
       multiline={multiline}
       placeholderTextColor={placeholderTextColor ?? '#8a8a8a'}
-      selectionColor={foregroundColor}
-      style={[{ fontFamily: 'Geist_400Regular' }, style]}
+      selectionColor={'#abab9c'}
+      style={[{ fontFamily: 'Inter_400Regular' }, style]}
       textAlignVertical="top"
       {...props}
     />

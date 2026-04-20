@@ -1,3 +1,9 @@
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { MarkdownText } from '@/components/ui/markdown';
@@ -15,7 +21,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { fetch as expoFetch } from 'expo/fetch';
 import * as Haptics from 'expo-haptics';
-import { Copy, Menu, RotateCw, SendHorizontal } from 'lucide-react-native';
+import { Bird, Brain, Copy, Menu, RotateCw, SendHorizontal } from 'lucide-react-native';
 import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
@@ -26,6 +32,7 @@ type Message = {
   id: string;
   role: 'assistant' | 'user';
   text: string;
+  reasoning?: string;
   pending?: boolean;
 };
 
@@ -99,13 +106,32 @@ export function ChatScreen() {
           })),
       });
 
-      for await (const textPart of result.textStream) {
+      for await (const part of result.fullStream) {
+        if (part.type === 'reasoning-delta') {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    reasoning: `${message.reasoning ?? ''}${part.text}`,
+                    pending: false,
+                  }
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type !== 'text-delta') {
+          continue;
+        }
+
         setMessages((current) =>
           current.map((message) =>
             message.id === assistantMessageId
               ? {
                   ...message,
-                  text: `${message.text}${textPart}`,
+                  text: `${message.text}${part.text}`,
                   pending: false,
                 }
               : message
@@ -149,7 +175,13 @@ export function ChatScreen() {
     const nextMessages = [
       ...messages,
       userMessage,
-      { id: assistantMessageId, role: 'assistant' as const, text: '', pending: true },
+      {
+        id: assistantMessageId,
+        role: 'assistant' as const,
+        text: '',
+        reasoning: '',
+        pending: true,
+      },
     ];
 
     setMessages(nextMessages);
@@ -195,7 +227,13 @@ export function ChatScreen() {
     const assistantMessageId = `${Date.now()}-assistant`;
     const nextMessages = [
       ...messages.slice(0, userIndex + 1),
-      { id: assistantMessageId, role: 'assistant' as const, text: '', pending: true },
+      {
+        id: assistantMessageId,
+        role: 'assistant' as const,
+        text: '',
+        reasoning: '',
+        pending: true,
+      },
     ];
 
     setMessages(nextMessages);
@@ -228,7 +266,10 @@ export function ChatScreen() {
             </Button>
 
             <View className="flex-1">
-              <Text className="text-lg font-semibold tracking-tight">Chat</Text>
+              <View className="flex flex-row items-center gap-2">
+                <Icon as={Bird} className="text-primary size-5" />
+                <Text className="text-lg font-semibold tracking-tight">OpenBird</Text>
+              </View>
               <Text className="text-muted-foreground font-mono text-sm tracking-tight">
                 {settings.model ? settings.model : 'Choose a provider to get started.'}
               </Text>
@@ -247,8 +288,7 @@ export function ChatScreen() {
               contentContainerStyle={{
                 flexGrow: 1,
                 gap: 16,
-                justifyContent: 'flex-end',
-                paddingVertical: 24,
+                paddingVertical: 20,
               }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
@@ -270,7 +310,7 @@ export function ChatScreen() {
           {chatError ? <Text className="text-destructive mb-3 text-sm">{chatError}</Text> : null}
 
           <View className="-mx-4 mt-4 px-4">
-            <View className="border-border/70 bg-background rounded-2xl border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
+            <View className="border-border/70 bg-background rounded-[1.25rem] border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
               <Textarea
                 value={draft}
                 onChangeText={setDraft}
@@ -320,11 +360,28 @@ function ChatBubble({
 }) {
   const isUser = message.role === 'user';
   const displayText = message.text || (message.pending ? 'Thinking...' : '');
+  const reasoningText = message.reasoning?.trim();
 
   return (
     <View className={isUser ? 'items-end' : 'items-stretch'}>
       <View
         className={isUser ? 'bg-primary max-w-[85%] rounded-full px-4 py-2.5' : 'w-full px-1 py-1'}>
+        {!isUser && reasoningText ? (
+          <Accordion type="single" collapsible className="mb-2">
+            <AccordionItem value={`reasoning-${message.id}`} className="border-0">
+              <AccordionTrigger className="rounded-lg px-2 py-2">
+                <View className="flex-row items-center gap-2">
+                  <Icon as={Brain} className="text-accent-foreground size-4" />
+                  <Text className="text-accent-foreground text-sm font-medium">Reasoning</Text>
+                </View>
+              </AccordionTrigger>
+              <AccordionContent className="px-2 pt-1">
+                <Text className="text-muted-foreground text-sm leading-6">{reasoningText}</Text>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        ) : null}
+
         {isUser ? (
           <Text className="text-primary-foreground">{displayText}</Text>
         ) : (

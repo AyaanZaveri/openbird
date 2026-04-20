@@ -369,7 +369,7 @@ function ChatBubble({
         {!isUser && reasoningText ? (
           <Accordion type="single" collapsible className="mb-2">
             <AccordionItem value={`reasoning-${message.id}`} className="border-0">
-              <AccordionTrigger className="rounded-lg px-2 py-2">
+              <AccordionTrigger className="rounded-lg pr-1 py-2">
                 <View className="flex-row items-center gap-2">
                   <Icon as={Brain} className="text-accent-foreground size-4" />
                   <Text className="text-accent-foreground text-sm font-medium">Reasoning</Text>

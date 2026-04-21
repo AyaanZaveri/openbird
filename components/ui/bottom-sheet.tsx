@@ -156,7 +156,7 @@ function BottomSheetInput({ style, placeholderTextColor, ...props }: TextInputPr
           backgroundColor: palette.background,
           borderColor: palette.input,
           color: palette.foreground,
-          fontFamily: 'Inter_400Regular',
+          fontFamily: 'Geist_400Regular',
         },
         style,
       ]}

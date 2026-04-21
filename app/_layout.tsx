@@ -1,16 +1,17 @@
 import '@/global.css';
 
+import { ChatHistoryProvider } from '@/components/providers/chat-history-provider';
 import { loadThemePreference } from '@/lib/theme-preferences';
 import { NAV_THEME } from '@/lib/theme';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import {
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
-  Inter_700Bold,
-  Inter_800ExtraBold,
+  Geist_400Regular,
+  Geist_500Medium,
+  Geist_600SemiBold,
+  Geist_700Bold,
+  Geist_800ExtraBold,
   useFonts,
-} from '@expo-google-fonts/inter';
+} from '@expo-google-fonts/geist';
 import { GeistMono_400Regular } from '@expo-google-fonts/geist-mono';
 import { ThemeProvider } from '@react-navigation/native';
 import { PortalHost } from '@rn-primitives/portal';
@@ -34,11 +35,11 @@ export default function RootLayout() {
   const resolvedTheme = theme ?? 'light';
   const [themePreferenceLoaded, setThemePreferenceLoaded] = React.useState(false);
   const [loaded, error] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-    Inter_800ExtraBold,
+    Geist_400Regular,
+    Geist_500Medium,
+    Geist_600SemiBold,
+    Geist_700Bold,
+    Geist_800ExtraBold,
     GeistMono_400Regular,
   });
 
@@ -64,31 +65,34 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <KeyboardProvider>
         <BottomSheetModalProvider>
-          <ThemeProvider value={NAV_THEME[theme ?? 'light']}>
-            <View style={{ flex: 1, backgroundColor: NAV_THEME[resolvedTheme].colors.background }}>
-              <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-              <Stack
-                screenOptions={{
-                  headerShadowVisible: false,
-                  headerTitleAlign: 'left',
-                  headerTitleStyle: { fontFamily: 'Inter_700Bold' },
-                  contentStyle: { backgroundColor: NAV_THEME[resolvedTheme].colors.background },
-                }}>
-                <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-                <Stack.Screen
-                  name="settings"
-                  options={{
-                    headerShown: false,
-                    animation: 'ios_from_right',
-                    presentation: 'card',
-                    freezeOnBlur: true,
+          <ChatHistoryProvider>
+            <ThemeProvider value={NAV_THEME[theme ?? 'light']}>
+              <View
+                style={{ flex: 1, backgroundColor: NAV_THEME[resolvedTheme].colors.background }}>
+                <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+                <Stack
+                  screenOptions={{
+                    headerShadowVisible: false,
+                    headerTitleAlign: 'left',
+                    headerTitleStyle: { fontFamily: 'Geist_700Bold' },
                     contentStyle: { backgroundColor: NAV_THEME[resolvedTheme].colors.background },
-                  }}
-                />
-              </Stack>
-              <PortalHost />
-            </View>
-          </ThemeProvider>
+                  }}>
+                  <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+                  <Stack.Screen
+                    name="settings"
+                    options={{
+                      headerShown: false,
+                      animation: 'ios_from_right',
+                      presentation: 'card',
+                      freezeOnBlur: true,
+                      contentStyle: { backgroundColor: NAV_THEME[resolvedTheme].colors.background },
+                    }}
+                  />
+                </Stack>
+                <PortalHost />
+              </View>
+            </ThemeProvider>
+          </ChatHistoryProvider>
         </BottomSheetModalProvider>
       </KeyboardProvider>
     </GestureHandlerRootView>

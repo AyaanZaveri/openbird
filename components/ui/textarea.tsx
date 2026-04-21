@@ -30,7 +30,7 @@ function Textarea({
       multiline={multiline}
       placeholderTextColor={placeholderTextColor ?? '#8a8a8a'}
       selectionColor={'#abab9c'}
-      style={[{ fontFamily: 'Inter_400Regular' }, style]}
+      style={[{ fontFamily: 'Geist_400Regular' }, style]}
       textAlignVertical="top"
       {...props}
     />

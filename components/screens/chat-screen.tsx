@@ -10,6 +10,8 @@ import { Icon } from '@/components/ui/icon';
 import { MarkdownText } from '@/components/ui/markdown';
 import { Textarea } from '@/components/ui/textarea';
 import { Text } from '@/components/ui/text';
+import { useChatHistory } from '@/components/providers/chat-history-provider';
+import { truncateTitle, type Attachment, type Message } from '@/lib/chat-history';
 import {
   defaultSettings,
   loadProviderSettings,
@@ -18,7 +20,7 @@ import {
   type SettingsForm,
 } from '@/lib/provider-settings';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { streamText } from 'ai';
+import { generateText, streamText } from 'ai';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
@@ -32,6 +34,7 @@ import {
   Hourglass,
   ImagePlus,
   Menu,
+  MessageCirclePlus,
   RotateCw,
   SendHorizontal,
   Timer,
@@ -43,30 +46,18 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { withUniwind } from 'uniwind';
 
-type Attachment = {
-  id: string;
-  filename: string;
-  mediaType: string;
-  previewUri: string;
-  base64: string;
-};
-
-type Message = {
-  id: string;
-  role: 'assistant' | 'user';
-  text: string;
-  attachments?: Attachment[];
-  reasoning?: string;
-  pending?: boolean;
-  responseTimeMs?: number;
-};
-
 const StyledSafeAreaView = withUniwind(SafeAreaView);
+
+function sanitizeGeneratedTitle(value: string, fallback: string) {
+  const normalized = value.replace(/["'`]/g, '').replace(/\s+/g, ' ').trim();
+  return truncateTitle(normalized || fallback, 40);
+}
 
 export function ChatScreen() {
   const navigation = useNavigation<any>();
   const router = useRouter();
-  const [messages, setMessages] = React.useState<Message[]>([]);
+  const { currentChat, setCurrentChatMessages, setChatTitle, startNewChat, updateChatMessages } =
+    useChatHistory();
   const [draft, setDraft] = React.useState('');
   const [attachments, setAttachments] = React.useState<Attachment[]>([]);
   const [settings, setSettings] = React.useState<SettingsForm>(defaultSettings);
@@ -87,6 +78,8 @@ export function ChatScreen() {
     return () => clearTimeout(timeoutId);
   }, [copiedMessageId]);
 
+  const messages = currentChat.messages;
+
   useFocusEffect(
     React.useCallback(() => {
       let cancelled = false;
@@ -104,7 +97,12 @@ export function ChatScreen() {
     }, [])
   );
 
-  async function streamAssistantResponse(nextMessages: Message[], assistantMessageId: string) {
+  async function streamAssistantResponse(
+    nextMessages: Message[],
+    assistantMessageId: string,
+    chatId: string,
+    titleSource: string | null
+  ) {
     const startedAt = Date.now();
 
     const parsedSettings = settingsSchema.safeParse(settings);
@@ -125,6 +123,22 @@ export function ChatScreen() {
 
     try {
       setChatError(null);
+
+      if (titleSource) {
+        void (async () => {
+          try {
+            const result = await generateText({
+              model: provider(parsedSettings.data.model),
+              prompt: `Generate a short title for this chat using the user's request. Return only the title, max 6 words.\n\nUser request: ${titleSource}`,
+            });
+
+            setChatTitle(chatId, sanitizeGeneratedTitle(result.text, titleSource));
+          } catch {
+            setChatTitle(chatId, truncateTitle(titleSource, 40));
+          }
+        })();
+      }
+
       const result = streamText({
         model: provider(parsedSettings.data.model),
         messages: nextMessages
@@ -157,7 +171,7 @@ export function ChatScreen() {
 
       for await (const part of result.fullStream) {
         if (part.type === 'reasoning-delta') {
-          setMessages((current) =>
+          updateChatMessages(chatId, (current) =>
             current.map((message) =>
               message.id === assistantMessageId
                 ? {
@@ -175,7 +189,7 @@ export function ChatScreen() {
           continue;
         }
 
-        setMessages((current) =>
+        updateChatMessages(chatId, (current) =>
           current.map((message) =>
             message.id === assistantMessageId
               ? {
@@ -188,7 +202,7 @@ export function ChatScreen() {
         );
       }
 
-      setMessages((current) =>
+      updateChatMessages(chatId, (current) =>
         current.map((message) =>
           message.id === assistantMessageId ? { ...message, pending: false } : message
         )
@@ -196,7 +210,7 @@ export function ChatScreen() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Request failed.';
       setChatError(message);
-      setMessages((current) =>
+      updateChatMessages(chatId, (current) =>
         current.map((entry) =>
           entry.id === assistantMessageId
             ? {
@@ -213,7 +227,7 @@ export function ChatScreen() {
       setIsSending(false);
     }
 
-    setMessages((current) =>
+    updateChatMessages(chatId, (current) =>
       current.map((message) =>
         message.id === assistantMessageId
           ? {
@@ -294,6 +308,10 @@ export function ChatScreen() {
       attachments,
     };
     const assistantMessageId = `${timestamp}-assistant`;
+    const shouldGenerateTitle =
+      !currentChat.title.trim() &&
+      !messages.some((message) => message.role === 'user') &&
+      value.length > 0;
     const nextMessages = [
       ...messages,
       userMessage,
@@ -306,11 +324,16 @@ export function ChatScreen() {
       },
     ];
 
-    setMessages(nextMessages);
+    const chatId = setCurrentChatMessages(nextMessages);
     setDraft('');
     setAttachments([]);
 
-    await streamAssistantResponse(nextMessages, assistantMessageId);
+    await streamAssistantResponse(
+      nextMessages,
+      assistantMessageId,
+      chatId,
+      shouldGenerateTitle ? value : null
+    );
   }
 
   async function copyMessageText(message: Message) {
@@ -359,10 +382,10 @@ export function ChatScreen() {
       },
     ];
 
-    setMessages(nextMessages);
+    const chatId = setCurrentChatMessages(nextMessages);
     void Haptics.selectionAsync();
 
-    await streamAssistantResponse(nextMessages, assistantMessageId);
+    await streamAssistantResponse(nextMessages, assistantMessageId, chatId, null);
   }
 
   async function selectModel(model: string) {
@@ -383,9 +406,9 @@ export function ChatScreen() {
   }, [messages]);
 
   return (
-    <StyledSafeAreaView className="bg-background flex-1">
+    <StyledSafeAreaView className="bg-background flex-1 px-4">
       <KeyboardAvoidingView behavior="padding" className="flex-1">
-        <View className="flex-1 px-4 pb-4">
+        <View className="flex-1">
           <View className="mb-4 flex-row items-center justify-between gap-3 pt-2">
             <Button
               size="icon"
@@ -411,99 +434,117 @@ export function ChatScreen() {
                 <Icon as={ChevronDown} className="text-muted-foreground size-3.5" />
               </Pressable>
             </View>
+
+            <Button
+              size="icon"
+              variant="ghost"
+              disabled={isSending}
+              onPress={() => {
+                startNewChat();
+                setDraft('');
+                setAttachments([]);
+              }}
+              accessibilityLabel="Start a new chat">
+              <Icon as={MessageCirclePlus} className="size-5" />
+            </Button>
           </View>
 
-          {messages.length === 0 ? (
-            <View className="flex-1 items-center justify-center px-6">
-              <Text className="text-center text-3xl font-semibold tracking-tight">
-                What's on your mind?
-              </Text>
-            </View>
-          ) : (
-            <ScrollView
-              className="flex-1"
-              contentContainerStyle={{
-                flexGrow: 1,
-                gap: 16,
-                paddingVertical: 20,
-              }}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              scrollEventThrottle={16}>
-              {messages.map((message) => (
-                <ChatBubble
-                  key={message.id}
-                  message={message}
-                  copied={copiedMessageId === message.id}
-                  showActions={message.id === lastAssistantMessageId}
-                  onCopy={() => void copyMessageText(message)}
-                  onRegenerate={() => void regenerateLatestAssistantResponse()}
-                  isSending={isSending}
-                />
-              ))}
-            </ScrollView>
-          )}
-
-          {chatError ? <Text className="text-destructive mb-3 text-sm">{chatError}</Text> : null}
-
-          <View className="-mx-4 mt-4 px-4">
-            <View className="border-border/70 bg-background rounded-[1.25rem] border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
-              {attachments.length > 0 ? (
-                <ScrollView
-                  horizontal
-                  className="mb-3"
-                  contentContainerStyle={{ gap: 12 }}
-                  showsHorizontalScrollIndicator={false}>
-                  {attachments.map((attachment) => (
-                    <View key={attachment.id} className="relative">
-                      <Image
-                        source={{ uri: attachment.previewUri }}
-                        className="bg-muted size-18 rounded-xl"
-                      />
-                      <Pressable
-                        className="bg-background/90 absolute top-1 right-1 items-center justify-center rounded-full p-1"
-                        onPress={() => removeAttachment(attachment.id)}
-                        accessibilityLabel={`Remove ${attachment.filename}`}>
-                        <Icon as={X} className="size-3.5" />
-                      </Pressable>
-                    </View>
-                  ))}
-                </ScrollView>
-              ) : null}
-
-              <Textarea
-                value={draft}
-                onChangeText={setDraft}
-                editable={!isSending}
-                placeholder="Ask OpenBird..."
-                className="max-h-48 min-h-12 border-0 px-1 py-1 shadow-none"
-                onSubmitEditing={() => {
-                  if (Platform.OS !== 'web') {
-                    sendMessage();
-                  }
+          <View className="flex-1">
+            {messages.length === 0 ? (
+              <View className="flex-1 items-center justify-center px-6 pb-24">
+                <Text className="text-center text-3xl font-semibold tracking-tight">
+                  What's on your mind?
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                className="flex-1"
+                contentContainerStyle={{
+                  flexGrow: 1,
+                  gap: 16,
+                  paddingBottom: 180,
+                  paddingVertical: 20,
                 }}
-                blurOnSubmit={false}
-              />
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                scrollEventThrottle={16}>
+                {messages.map((message) => (
+                  <ChatBubble
+                    key={message.id}
+                    message={message}
+                    copied={copiedMessageId === message.id}
+                    showActions={message.id === lastAssistantMessageId}
+                    onCopy={() => void copyMessageText(message)}
+                    onRegenerate={() => void regenerateLatestAssistantResponse()}
+                    isSending={isSending}
+                  />
+                ))}
+              </ScrollView>
+            )}
 
-              <View className="mt-2 flex-row items-center justify-between">
-                <Button
-                  size="icon"
-                  variant="secondary"
-                  className="size-9 rounded-full"
-                  disabled={isSending}
-                  onPress={() => void pickImages()}
-                  accessibilityLabel="Add images">
-                  <Icon as={ImagePlus} className="text-secondary-foreground size-4.5" />
-                </Button>
+            <View className="absolute inset-x-4 bottom-4">
+              {chatError ? <Text className="text-destructive mb-3 px-1 text-sm">{chatError}</Text> : null}
 
-                <Button
-                  size="icon"
-                  className="size-9 rounded-full"
-                  disabled={isSending}
-                  onPress={() => void sendMessage()}
-                  accessibilityLabel="Send message">
-                  <Icon as={SendHorizontal} className="text-primary-foreground size-4.5" />
-                </Button>
+              <View className="-mx-4">
+                <View className="border-border/70 rounded-[1.25rem] bg-background border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
+                  {attachments.length > 0 ? (
+                    <ScrollView
+                      horizontal
+                      className="mb-3"
+                      contentContainerStyle={{ gap: 12 }}
+                      showsHorizontalScrollIndicator={false}>
+                      {attachments.map((attachment) => (
+                        <View key={attachment.id} className="relative">
+                          <Image
+                            source={{ uri: attachment.previewUri }}
+                            className="bg-muted size-18 rounded-xl"
+                          />
+                          <Pressable
+                            className="bg-background/90 absolute top-1 right-1 items-center justify-center rounded-full p-1"
+                            onPress={() => removeAttachment(attachment.id)}
+                            accessibilityLabel={`Remove ${attachment.filename}`}>
+                            <Icon as={X} className="size-3.5" />
+                          </Pressable>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  ) : null}
+
+                  <Textarea
+                    value={draft}
+                    onChangeText={setDraft}
+                    editable={!isSending}
+                    placeholder="Ask OpenBird..."
+                    className="max-h-48 min-h-12 border-0 px-1 py-1 shadow-none"
+                    onSubmitEditing={() => {
+                      if (Platform.OS !== 'web') {
+                        sendMessage();
+                      }
+                    }}
+                    blurOnSubmit={false}
+                  />
+
+                  <View className="mt-2 flex-row items-center justify-between">
+                    <Button
+                      size="icon"
+                      variant="secondary"
+                      className="size-9 rounded-full"
+                      disabled={isSending}
+                      onPress={() => void pickImages()}
+                      accessibilityLabel="Add images">
+                      <Icon as={ImagePlus} className="text-secondary-foreground size-4.5" />
+                    </Button>
+
+                    <Button
+                      size="icon"
+                      className="size-9 rounded-full"
+                      disabled={isSending}
+                      onPress={() => void sendMessage()}
+                      accessibilityLabel="Send message">
+                      <Icon as={SendHorizontal} className="text-primary-foreground size-4.5" />
+                    </Button>
+                  </View>
+                </View>
               </View>
             </View>
           </View>

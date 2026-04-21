@@ -25,7 +25,7 @@ function Input({ className, placeholderTextColor, style, ...props }: InputProps)
       selectionColor={foregroundColor}
       style={[
         {
-          fontFamily: 'Inter_400Regular',
+          fontFamily: 'Geist_400Regular',
           lineHeight: Platform.OS === 'ios' ? 20 : 22,
           paddingTop: Platform.OS === 'ios' ? 8 : undefined,
           paddingBottom: Platform.OS === 'ios' ? 10 : undefined,

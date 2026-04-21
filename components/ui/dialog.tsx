@@ -110,7 +110,7 @@ function DialogTitle({
   return (
     <DialogPrimitive.Title
       className={cn('text-foreground text-lg leading-none font-semibold', className)}
-      style={[{ fontFamily: 'Inter_600SemiBold' }, style]}
+      style={[{ fontFamily: 'Geist_600SemiBold' }, style]}
       {...props}
     />
   );
@@ -124,7 +124,7 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       className={cn('text-muted-foreground text-sm', className)}
-      style={[{ fontFamily: 'Inter_400Regular' }, style]}
+      style={[{ fontFamily: 'Geist_400Regular' }, style]}
       {...props}
     />
   );

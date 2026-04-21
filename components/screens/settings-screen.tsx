@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/bottom-sheet';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Text } from '@/components/ui/text';
 import {
   defaultSettings,
@@ -17,6 +18,7 @@ import {
   settingsSchema,
   type SettingsForm,
 } from '@/lib/provider-settings';
+import { loadUserMemory, saveUserMemory } from '@/lib/user-memory';
 import {
   loadThemePreference,
   saveThemePreference,
@@ -41,6 +43,7 @@ export function SettingsScreen() {
   const [settings, setSettings] = React.useState<SettingsForm>(defaultSettings);
   const [settingsError, setSettingsError] = React.useState<string | null>(null);
   const [themePreference, setThemePreference] = React.useState<ThemePreference>('system');
+  const [memoryPrompt, setMemoryPrompt] = React.useState('');
   const [hasLoadedInitialState, setHasLoadedInitialState] = React.useState(false);
   const [isThemeSheetOpen, setIsThemeSheetOpen] = React.useState(false);
   const [isModelSheetOpen, setIsModelSheetOpen] = React.useState(false);
@@ -66,9 +69,11 @@ export function SettingsScreen() {
       void (async () => {
         const nextSettings = await loadProviderSettings();
         const storedThemePreference = await loadThemePreference();
+        const storedMemory = await loadUserMemory();
         if (!cancelled) {
           setSettings(nextSettings);
           setThemePreference(storedThemePreference);
+          setMemoryPrompt(storedMemory);
           setHasLoadedInitialState(true);
         }
       })();
@@ -88,6 +93,7 @@ export function SettingsScreen() {
     }
 
     await saveProviderSettings(parsedSettings.data);
+    await saveUserMemory(memoryPrompt);
     setSettings(parsedSettings.data);
     setSettingsError(null);
     router.back();
@@ -225,6 +231,32 @@ export function SettingsScreen() {
                       {settings.model || 'Choose a model'}
                     </Text>
                     <Icon as={ChevronRight} className="text-muted-foreground size-4" />
+                  </Button>
+                </View>
+              </View>
+
+              <View className="mt-2 gap-1">
+                <Text className="text-lg font-medium">Memory</Text>
+                <Text className="text-muted-foreground text-sm">
+                  Persistent user context injected into future chats. You can review, edit, or clear
+                  it here.
+                </Text>
+              </View>
+
+              <View className="gap-2">
+                <Text className="text-sm font-medium">Memory Prompt</Text>
+                <Textarea
+                  placeholder="No saved memory yet. Durable user context will appear here."
+                  value={memoryPrompt}
+                  onChangeText={setMemoryPrompt}
+                  className="min-h-40"
+                />
+                <View className="flex-row justify-end">
+                  <Button
+                    variant="outline"
+                    onPress={() => setMemoryPrompt('')}
+                    accessibilityLabel="Clear saved memory">
+                    <Text>Clear Memory</Text>
                   </Button>
                 </View>
               </View>

@@ -11,7 +11,12 @@ import { MarkdownText } from '@/components/ui/markdown';
 import { Textarea } from '@/components/ui/textarea';
 import { Text } from '@/components/ui/text';
 import { useChatHistory } from '@/components/providers/chat-history-provider';
-import { truncateTitle, type Attachment, type Message } from '@/lib/chat-history';
+import {
+  truncateTitle,
+  type Attachment,
+  type Message,
+  type ToolInvocation,
+} from '@/lib/chat-history';
 import {
   defaultSettings,
   loadProviderSettings,
@@ -19,8 +24,9 @@ import {
   settingsSchema,
   type SettingsForm,
 } from '@/lib/provider-settings';
+import { loadUserMemory, normalizeMemoryPrompt, saveUserMemory } from '@/lib/user-memory';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateText, streamText } from 'ai';
+import { generateText, stepCountIs, streamText, tool } from 'ai';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
@@ -29,6 +35,7 @@ import * as Haptics from 'expo-haptics';
 import {
   Bird,
   Brain,
+  Check,
   ChevronDown,
   Copy,
   Hourglass,
@@ -38,6 +45,7 @@ import {
   RotateCw,
   SendHorizontal,
   Timer,
+  TriangleAlert,
   X,
 } from 'lucide-react-native';
 import * as React from 'react';
@@ -45,8 +53,59 @@ import { Alert, Image, Platform, Pressable, ScrollView, View } from 'react-nativ
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { withUniwind } from 'uniwind';
+import { z } from 'zod';
 
 const StyledSafeAreaView = withUniwind(SafeAreaView);
+
+const updateMemoryInputSchema = z.object({
+  memory: z
+    .string()
+    .trim()
+    .min(1)
+    .describe('The durable user context that should be saved for future conversations.'),
+  reason: z
+    .string()
+    .trim()
+    .optional()
+    .describe('Why this information matters for future conversations.'),
+});
+
+function buildChatSystemPrompt(memoryPrompt: string) {
+  const sections = [
+    'You are OpenBird, a helpful assistant.',
+    'Use the saved memory only when it improves the current conversation. Do not mention the memory block unless it is relevant.',
+    'When the user shares durable personal context that would help future conversations, call the updateMemory tool.',
+    'Save only long-term useful details such as identity, preferences, goals, constraints, recurring projects, communication preferences, or important ongoing context.',
+    'Do not save filler, temporary one-off details, or short-term requests that will not matter later.',
+  ];
+
+  if (memoryPrompt.trim()) {
+    sections.push(`Saved user memory:\n${memoryPrompt.trim()}`);
+  }
+
+  return sections.join('\n\n');
+}
+
+function getToolCallId(part: { toolCallId?: string; id?: string }) {
+  return part.toolCallId ?? part.id ?? `tool-${Date.now()}`;
+}
+
+function upsertToolInvocation(
+  toolInvocations: ToolInvocation[] | undefined,
+  toolCallId: string,
+  updater: (toolInvocation: ToolInvocation | null) => ToolInvocation
+) {
+  const current = toolInvocations ?? [];
+  const index = current.findIndex((toolInvocation) => toolInvocation.toolCallId === toolCallId);
+
+  if (index === -1) {
+    return [...current, updater(null)];
+  }
+
+  return current.map((toolInvocation, currentIndex) =>
+    currentIndex === index ? updater(toolInvocation) : toolInvocation
+  );
+}
 
 function sanitizeGeneratedTitle(value: string, fallback: string) {
   const normalized = value.replace(/["'`]/g, '').replace(/\s+/g, ' ').trim();
@@ -65,6 +124,12 @@ export function ChatScreen() {
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null);
   const [isSending, setIsSending] = React.useState(false);
   const [isModelSheetOpen, setIsModelSheetOpen] = React.useState(false);
+  const [memoryPrompt, setMemoryPrompt] = React.useState('');
+  const memoryPromptRef = React.useRef('');
+
+  React.useEffect(() => {
+    memoryPromptRef.current = memoryPrompt;
+  }, [memoryPrompt]);
 
   React.useEffect(() => {
     if (!copiedMessageId) {
@@ -86,8 +151,10 @@ export function ChatScreen() {
 
       void (async () => {
         const nextSettings = await loadProviderSettings();
+        const nextMemoryPrompt = await loadUserMemory();
         if (!cancelled) {
           setSettings(nextSettings);
+          setMemoryPrompt(nextMemoryPrompt);
         }
       })();
 
@@ -141,6 +208,58 @@ export function ChatScreen() {
 
       const result = streamText({
         model: provider(parsedSettings.data.model),
+        system: buildChatSystemPrompt(memoryPromptRef.current),
+        stopWhen: stepCountIs(5),
+        tools: {
+          updateMemory: tool({
+            description:
+              'Save durable user context that should persist across future conversations. Use this only for long-term helpful facts, preferences, goals, constraints, or recurring projects.',
+            inputSchema: updateMemoryInputSchema,
+            execute: async ({ memory, reason }) => {
+              try {
+                const existingMemory = memoryPromptRef.current;
+                const mergeResult = await generateText({
+                  model: provider(parsedSettings.data.model),
+                  system:
+                    'You maintain a concise long-term memory prompt for a user. Merge the new candidate memory into the existing memory. Keep only durable, useful facts. Avoid duplicates. Prefer the newest information when facts conflict. Keep the memory concise and well-structured with short section headers only when helpful. Return only the final memory prompt text.',
+                  prompt: [
+                    existingMemory.trim()
+                      ? `Existing memory:\n${existingMemory.trim()}`
+                      : 'Existing memory:\n(none)',
+                    `New memory candidate:\n${memory}`,
+                    reason?.trim() ? `Why it matters:\n${reason.trim()}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n'),
+                });
+
+                const nextMemoryPrompt = normalizeMemoryPrompt(mergeResult.text);
+                const normalizedExistingMemory = normalizeMemoryPrompt(existingMemory);
+
+                if (!nextMemoryPrompt || nextMemoryPrompt === normalizedExistingMemory) {
+                  return {
+                    status: 'unchanged' as const,
+                    summary: 'Memory already covered this context.',
+                  };
+                }
+
+                await saveUserMemory(nextMemoryPrompt);
+                memoryPromptRef.current = nextMemoryPrompt;
+                setMemoryPrompt(nextMemoryPrompt);
+
+                return {
+                  status: 'saved' as const,
+                  summary: 'Saved for future conversations.',
+                };
+              } catch (error) {
+                return {
+                  status: 'error' as const,
+                  summary: error instanceof Error ? error.message : 'Unable to update memory.',
+                };
+              }
+            },
+          }),
+        },
         messages: nextMessages
           .filter(
             (message) => message.text.trim().length > 0 || (message.attachments?.length ?? 0) > 0
@@ -178,6 +297,137 @@ export function ChatScreen() {
                     ...message,
                     reasoning: `${message.reasoning ?? ''}${part.text}`,
                     pending: false,
+                  }
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type === 'tool-input-start' && part.toolName === 'updateMemory') {
+          const toolCallId = getToolCallId(part);
+
+          updateChatMessages(chatId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    pending: false,
+                    toolInvocations: upsertToolInvocation(
+                      message.toolInvocations,
+                      toolCallId,
+                      (toolInvocation) => ({
+                        toolCallId,
+                        toolName: 'updateMemory',
+                        state: 'input-streaming',
+                        inputText: toolInvocation?.inputText ?? '',
+                        input: toolInvocation?.input,
+                        output: toolInvocation?.output,
+                      })
+                    ),
+                  }
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type === 'tool-input-delta') {
+          const toolCallId = getToolCallId(part);
+
+          updateChatMessages(chatId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    pending: false,
+                    toolInvocations: upsertToolInvocation(
+                      message.toolInvocations,
+                      toolCallId,
+                      (toolInvocation) => ({
+                        toolCallId,
+                        toolName: 'updateMemory',
+                        state: 'input-streaming',
+                        inputText: `${toolInvocation?.inputText ?? ''}${part.delta}`,
+                        input: toolInvocation?.input,
+                        output: toolInvocation?.output,
+                      })
+                    ),
+                  }
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type === 'tool-call' && part.toolName === 'updateMemory') {
+          const toolCallId = getToolCallId(part);
+          const parsedInput = updateMemoryInputSchema.safeParse(part.input);
+
+          updateChatMessages(chatId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    pending: false,
+                    toolInvocations: upsertToolInvocation(
+                      message.toolInvocations,
+                      toolCallId,
+                      (toolInvocation) => ({
+                        toolCallId,
+                        toolName: 'updateMemory',
+                        state: 'input-available',
+                        inputText: toolInvocation?.inputText,
+                        input: parsedInput.success ? parsedInput.data : undefined,
+                        output: toolInvocation?.output,
+                      })
+                    ),
+                  }
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type === 'tool-result' && part.toolName === 'updateMemory') {
+          const toolCallId = getToolCallId(part);
+          const output =
+            part.output &&
+            typeof part.output === 'object' &&
+            'status' in part.output &&
+            'summary' in part.output
+              ? part.output
+              : { status: 'error', summary: 'Unable to update memory.' };
+
+          updateChatMessages(chatId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    pending: false,
+                    toolInvocations: upsertToolInvocation(
+                      message.toolInvocations,
+                      toolCallId,
+                      (toolInvocation) => ({
+                        toolCallId,
+                        toolName: 'updateMemory',
+                        state: 'output-available',
+                        inputText: toolInvocation?.inputText,
+                        input: toolInvocation?.input,
+                        output: {
+                          status:
+                            output.status === 'saved' ||
+                            output.status === 'unchanged' ||
+                            output.status === 'error'
+                              ? output.status
+                              : 'error',
+                          summary:
+                            typeof output.summary === 'string'
+                              ? output.summary
+                              : 'Unable to update memory.',
+                        },
+                      })
+                    ),
                   }
                 : message
             )
@@ -321,6 +571,7 @@ export function ChatScreen() {
         text: '',
         reasoning: '',
         pending: true,
+        toolInvocations: [],
       },
     ];
 
@@ -379,6 +630,7 @@ export function ChatScreen() {
         text: '',
         reasoning: '',
         pending: true,
+        toolInvocations: [],
       },
     ];
 
@@ -483,10 +735,12 @@ export function ChatScreen() {
             )}
 
             <View className="absolute inset-x-4 bottom-4">
-              {chatError ? <Text className="text-destructive mb-3 px-1 text-sm">{chatError}</Text> : null}
+              {chatError ? (
+                <Text className="text-destructive mb-3 px-1 text-sm">{chatError}</Text>
+              ) : null}
 
               <View className="-mx-4">
-                <View className="border-border/70 rounded-[1.25rem] bg-background border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
+                <View className="border-border/70 bg-background rounded-[1.25rem] border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
                   {attachments.length > 0 ? (
                     <ScrollView
                       horizontal
@@ -626,6 +880,17 @@ function ChatBubble({
           </Accordion>
         ) : null}
 
+        {!isUser && message.toolInvocations?.length ? (
+          <View className="mb-2 gap-2">
+            {message.toolInvocations.map((toolInvocation) => (
+              <MemoryToolInvocationCard
+                key={toolInvocation.toolCallId}
+                toolInvocation={toolInvocation}
+              />
+            ))}
+          </View>
+        ) : null}
+
         {displayText ? (
           isUser ? (
             <Text>{displayText}</Text>
@@ -667,6 +932,55 @@ function ChatBubble({
           ) : null}
         </View>
       ) : null}
+    </View>
+  );
+}
+
+function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvocation }) {
+  const preview = toolInvocation.input?.memory?.trim() || toolInvocation.inputText?.trim();
+
+  if (toolInvocation.state !== 'output-available') {
+    return (
+      <View className="border-border/70 bg-muted/40 flex-row items-start gap-3 rounded-2xl border px-3 py-2.5">
+        <Icon as={Hourglass} className="text-muted-foreground mt-0.5 size-4" />
+        <View className="flex-1 gap-1">
+          <Text className="text-sm font-medium">Saving to memory...</Text>
+          {preview ? (
+            <Text className="text-muted-foreground text-sm" numberOfLines={3}>
+              {preview}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    );
+  }
+
+  const isError = toolInvocation.output?.status === 'error';
+  const isSaved = toolInvocation.output?.status === 'saved';
+
+  return (
+    <View
+      className={
+        isError
+          ? 'border-destructive/30 bg-destructive/5 flex-row items-start gap-3 rounded-2xl border px-3 py-2.5'
+          : 'border-border/70 bg-muted/30 flex-row items-start gap-3 rounded-2xl border px-3 py-2.5'
+      }>
+      <Icon
+        as={isError ? TriangleAlert : Check}
+        className={isError ? 'text-destructive mt-0.5 size-4' : 'text-primary mt-0.5 size-4'}
+      />
+      <View className="flex-1 gap-1">
+        <Text className="text-sm font-medium">
+          {isError
+            ? 'Memory update failed'
+            : isSaved
+              ? 'Saved to memory'
+              : 'Memory already up to date'}
+        </Text>
+        {toolInvocation.output?.summary ? (
+          <Text className="text-muted-foreground text-sm">{toolInvocation.output.summary}</Text>
+        ) : null}
+      </View>
     </View>
   );
 }

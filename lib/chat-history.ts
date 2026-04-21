@@ -17,6 +17,22 @@ export type Message = {
   reasoning?: string;
   pending?: boolean;
   responseTimeMs?: number;
+  toolInvocations?: ToolInvocation[];
+};
+
+export type ToolInvocation = {
+  toolCallId: string;
+  toolName: 'updateMemory';
+  state: 'input-streaming' | 'input-available' | 'output-available';
+  inputText?: string;
+  input?: {
+    memory: string;
+    reason?: string;
+  };
+  output?: {
+    status: 'saved' | 'unchanged' | 'error';
+    summary: string;
+  };
 };
 
 export type ChatThread = {
@@ -35,6 +51,25 @@ const attachmentSchema = z.object({
   base64: z.string(),
 });
 
+const toolInvocationSchema = z.object({
+  toolCallId: z.string(),
+  toolName: z.literal('updateMemory'),
+  state: z.enum(['input-streaming', 'input-available', 'output-available']),
+  inputText: z.string().optional(),
+  input: z
+    .object({
+      memory: z.string(),
+      reason: z.string().optional(),
+    })
+    .optional(),
+  output: z
+    .object({
+      status: z.enum(['saved', 'unchanged', 'error']),
+      summary: z.string(),
+    })
+    .optional(),
+});
+
 const messageSchema = z.object({
   id: z.string(),
   role: z.enum(['assistant', 'user']),
@@ -43,6 +78,7 @@ const messageSchema = z.object({
   reasoning: z.string().optional(),
   pending: z.boolean().optional(),
   responseTimeMs: z.number().optional(),
+  toolInvocations: z.array(toolInvocationSchema).optional(),
 });
 
 const chatThreadSchema = z.object({

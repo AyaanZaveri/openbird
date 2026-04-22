@@ -220,8 +220,19 @@ export function ChatScreen() {
                 const existingMemory = memoryPromptRef.current;
                 const mergeResult = await generateText({
                   model: provider(parsedSettings.data.model),
-                  system:
-                    'You maintain a concise long-term memory prompt for a user. Merge the new candidate memory into the existing memory. Keep only durable, useful facts. Avoid duplicates. Prefer the newest information when facts conflict. Keep the memory concise and well-structured with short section headers only when helpful. Return only the final memory prompt text.',
+                  system: `You maintain a concise internal user briefing for future conversations. Merge the new candidate memory into the existing memory. Keep only durable, useful facts. Avoid duplicates. Prefer the newest information when facts conflict. Write natural-language paragraphs under clear category sections only when relevant. Do not use key-value fields, checklist formatting, or bullet lists. Each section should read like an internal profile note: direct, information-dense sentences with no fluff.
+
+If relevant, use sections such as Work Context, Personal Context, Top of Mind, Preferences, Relationships, Goals, and Constraints. Only include sections that have meaningful content. Preserve nuance and important background, and update existing sections instead of rewriting everything blindly. Return only the final memory briefing text.
+
+Example style:
+
+Work Context
+
+Ayaan is a 17-year-old full-stack developer in Toronto, graduating from Woodlands Secondary in June 2026. He previously worked at Exa and shipped production features including search and the API playground.
+
+Personal Context
+
+He communicates in a direct, casual, and concise style. He values honest pushback over reassurance and dislikes overly polished or corporate responses.`,
                   prompt: [
                     existingMemory.trim()
                       ? `Existing memory:\n${existingMemory.trim()}`
@@ -249,7 +260,7 @@ export function ChatScreen() {
 
                 return {
                   status: 'saved' as const,
-                  summary: 'Saved for future conversations.',
+                  summary: 'Saved.',
                 };
               } catch (error) {
                 return {
@@ -836,9 +847,19 @@ function ChatBubble({
   const reasoningText = message.reasoning?.trim();
   const responseTimeLabel =
     message.responseTimeMs !== undefined ? `${(message.responseTimeMs / 1000).toFixed(1)}s` : null;
+  const [lineCount, setLineCount] = React.useState(1);
+
+  React.useEffect(() => {
+    setLineCount(1);
+  }, [displayText, message.id]);
+
+  const userBubbleClass =
+    lineCount > 1
+      ? 'bg-accent max-w-[85%] rounded-2xl px-4 py-2.5'
+      : 'bg-accent max-w-[85%] rounded-full px-4 py-2.5';
 
   return (
-    <View className={isUser ? 'items-end' : 'items-stretch'}>
+    <View className={isUser ? 'items-end' : 'mb-4 items-stretch'}>
       {message.attachments?.length ? (
         <View
           className={
@@ -859,9 +880,7 @@ function ChatBubble({
       <View
         className={
           isUser
-            ? message.attachments?.length
-              ? 'bg-accent max-w-[85%] rounded-full px-4 py-2.5'
-              : 'bg-accent max-w-[85%] rounded-full px-4 py-2.5'
+            ? userBubbleClass
             : 'w-full px-1 py-1'
         }>
         {!isUser && reasoningText ? (
@@ -881,7 +900,7 @@ function ChatBubble({
         ) : null}
 
         {!isUser && message.toolInvocations?.length ? (
-          <View className="mb-2 gap-2">
+          <View className="mb-4 gap-2">
             {message.toolInvocations.map((toolInvocation) => (
               <MemoryToolInvocationCard
                 key={toolInvocation.toolCallId}
@@ -893,7 +912,12 @@ function ChatBubble({
 
         {displayText ? (
           isUser ? (
-            <Text>{displayText}</Text>
+            <Text
+              onTextLayout={(event) => {
+                setLineCount(event.nativeEvent.lines.length);
+              }}>
+              {displayText}
+            </Text>
           ) : (
             <MarkdownText>{displayText}</MarkdownText>
           )
@@ -962,8 +986,8 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
     <View
       className={
         isError
-          ? 'border-destructive/30 bg-destructive/5 flex-row items-start gap-3 rounded-2xl border px-3 py-2.5'
-          : 'border-border/70 bg-muted/30 flex-row items-start gap-3 rounded-2xl border px-3 py-2.5'
+          ? 'border-destructive/30 bg-destructive/5 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5'
+          : 'border-border/70 bg-muted/30 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5'
       }>
       <Icon
         as={isError ? TriangleAlert : Check}
@@ -977,9 +1001,9 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
               ? 'Saved to memory'
               : 'Memory already up to date'}
         </Text>
-        {toolInvocation.output?.summary ? (
+        {/* {toolInvocation.output?.summary ? (
           <Text className="text-muted-foreground text-sm">{toolInvocation.output.summary}</Text>
-        ) : null}
+        ) : null} */}
       </View>
     </View>
   );

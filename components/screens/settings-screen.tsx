@@ -26,7 +26,16 @@ import {
 } from '@/lib/theme-preferences';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, ChevronRight, Eclipse, Moon, Box, Sun, SunMoon } from 'lucide-react-native';
+import {
+  Box,
+  ChevronLeft,
+  ChevronRight,
+  Eclipse,
+  Database,
+  Moon,
+  Sun,
+  SunMoon,
+} from 'lucide-react-native';
 import * as React from 'react';
 import { InteractionManager, ScrollView, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
@@ -236,10 +245,12 @@ export function SettingsScreen() {
               </View>
 
               <View className="mt-2 gap-1">
-                <Text className="text-lg font-medium">Memory</Text>
+                <View className="flex-row items-center gap-2">
+                  <Icon as={Database} className="text-foreground size-5" />
+                  <Text className="text-lg font-medium">Memory</Text>
+                </View>
                 <Text className="text-muted-foreground text-sm">
-                  Persistent user context injected into future chats. You can review, edit, or clear
-                  it here.
+                  Persistent user context that you can review and edit
                 </Text>
               </View>
 

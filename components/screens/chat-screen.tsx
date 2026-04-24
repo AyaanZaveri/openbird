@@ -1269,7 +1269,7 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
     const resultCount = toolInvocation.output?.results.length ?? 0;
 
     return (
-      <View className="border-border/70 bg-muted/30 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5">
+      <View className="border-border/50 bg-primary/2 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5">
         <Icon as={Globe} className="text-primary mt-0.5 size-4" />
         <View className="flex-1">
           <Text className="text-sm font-medium">
@@ -1277,7 +1277,7 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
               ? `Looked at ${resultCount} sources`
               : 'Web search returned no results'}
           </Text>
-          <Text className="text-muted-foreground text-sm" numberOfLines={2}>
+          <Text className="text-muted-foreground text-sm font-mono tracking-tighter" numberOfLines={2}>
             {queryPreview}
           </Text>
         </View>

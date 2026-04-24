@@ -31,12 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
 
       - name: Install dependencies
@@ -51,22 +51,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: zulu
-          java-version: "17"
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
 
       - name: Setup Expo and EAS
         uses: expo/expo-github-action@v8
@@ -79,18 +70,8 @@ jobs:
 
       - name: Build development APK
         if: github.event_name == 'push' || github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'dev'
-        run: npx eas-cli build --platform android --profile development --local --non-interactive --output ./app-dev.apk
+        run: npx eas-cli build --platform android --profile development --non-interactive --no-wait
 
       - name: Build preview APK
         if: github.event_name == 'push' || github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'preview'
-        run: npx eas-cli build --platform android --profile preview --local --non-interactive --output ./app-preview.apk
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-builds
-          path: |
-            ./app-dev.apk
-            ./app-preview.apk
-          if-no-files-found: error
-          retention-days: 7
+        run: npx eas-cli build --platform android --profile preview --non-interactive --no-wait

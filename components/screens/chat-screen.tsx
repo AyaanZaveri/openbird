@@ -1020,7 +1020,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
               ) : null}
 
               <View className="-mx-4">
-                <View className="border-border/70 bg-background rounded-[1.25rem] border px-3 pt-3 pb-3 shadow-xl shadow-black/5">
+                <View className="border-border/70 bg-background rounded-[1.25rem] border px-3 pt-3 pb-3 shadow-2xl shadow-primary/10">
                   {attachments.length > 0 ? (
                     <ScrollView
                       horizontal
@@ -1073,7 +1073,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                         size="icon"
                         // variant={webSearchEnabled ? 'default' : 'secondary'}
                         variant={'secondary'}
-                        className={`size-9 rounded-full ${webSearchEnabled ? 'bg-cyan-100/75' : ''}`}
+                        className={`size-9 rounded-full ${webSearchEnabled ? 'bg-cyan-100/75 dark:bg-cyan-800/75' : ''}`}
                         disabled={isSending}
                         onPress={() => void toggleWebSearch()}
                         accessibilityLabel={
@@ -1083,7 +1083,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                           as={Globe}
                           className={
                             webSearchEnabled
-                              ? 'text-cyan-500 size-4.5'
+                              ? 'text-cyan-500 dark:text-cyan-400 size-4.5'
                               : 'text-muted-foreground size-4.5'
                           }
                         />

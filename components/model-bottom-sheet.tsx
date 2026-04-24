@@ -148,7 +148,7 @@ export function ModelBottomSheet({
         stickyHeaderIndices={[0]}
         contentContainerStyle={{ paddingBottom: insets.bottom + 8 }}
         ListHeaderComponent={
-          <View className="bg-background border border-border border-y-0 px-5 pt-1 pb-3">
+          <View className="bg-card border border-border border-y-0 px-5 pt-1 pb-3">
             <BottomSheetHeader>
               <BottomSheetTitle>Choose Model</BottomSheetTitle>
               <BottomSheetDescription>
@@ -157,7 +157,7 @@ export function ModelBottomSheet({
             </BottomSheetHeader>
 
             <View className="mt-4 flex-row items-center gap-2">
-              <View className="border-input bg-background min-w-0 flex-1 flex-row items-center gap-2 rounded-xl border pr-1.5 pl-3">
+              <View className="border-input bg-card min-w-0 flex-1 flex-row items-center gap-2 rounded-xl border pr-1.5 pl-3">
                 <BottomSheetInput
                   autoCapitalize="none"
                   autoCorrect={false}

@@ -67,14 +67,17 @@
     "react-dom": "19.2.0",
     "react-native": "0.83.6",
     "react-native-collapsible": "^1.6.2",
+    "react-native-enriched-markdown": "^0.4.0",
     "react-native-gesture-handler": "~2.30.0",
     "react-native-keyboard-controller": "1.20.7",
     "react-native-reanimated": "4.2.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.23.0",
+    "react-native-streamdown": "^0.1.1",
     "react-native-svg": "^15.15.3",
     "react-native-web": "^0.21.0",
-    "react-native-worklets": "0.7.4",
+    "react-native-worklets": "^0.8.0-bundle-mode-preview-2",
+    "remend": "^1.2.2",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.1",
     "tailwindcss-animate": "^1.0.7",
@@ -90,6 +93,11 @@
     "typescript": "~5.9.2"
   },
   "private": true,
+  "worklets": {
+    "staticFeatureFlags": {
+      "BUNDLE_MODE_ENABLED": true
+    }
+  },
   "expo": {
     "doctor": {
       "appConfigFieldsNotSyncedCheck": {

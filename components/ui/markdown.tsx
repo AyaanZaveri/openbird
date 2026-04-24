@@ -1,11 +1,11 @@
-import { StreamdownText } from 'react-native-streamdown';
+import { EnrichedMarkdownText } from 'react-native-enriched-markdown';
 
 type MarkdownTextProps = {
   children: string;
 };
 
 function MarkdownText({ children }: MarkdownTextProps) {
-  return <StreamdownText markdown={children} />;
+  return <EnrichedMarkdownText markdown={children} />;
 }
 
 export { MarkdownText };

@@ -45,9 +45,9 @@ jobs:
       - name: Run TypeScript check
         run: npx tsc --noEmit
 
-  build-android:
+  build-android-dev:
     needs: test
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch'
+    if: ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch') && (github.event_name == 'push' || github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'dev')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -59,6 +59,12 @@ jobs:
           node-version: "22"
           cache: npm
 
+      - name: Free runner disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/chromium /opt/microsoft
+          df -h
+
       - name: Setup Expo and EAS
         uses: expo/expo-github-action@v8
         with:
@@ -68,10 +74,53 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build development APK
-        if: github.event_name == 'push' || github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'dev'
-        run: npx eas-cli build --platform android --profile development --non-interactive --no-wait
+      - name: Build development APK locally
+        run: npx eas-cli build --platform android --profile development --local --non-interactive --output ./app-dev.apk
 
-      - name: Build preview APK
-        if: github.event_name == 'push' || github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'preview'
-        run: npx eas-cli build --platform android --profile preview --non-interactive --no-wait
+      - name: Upload development APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-dev
+          path: ./app-dev.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  build-android-preview:
+    needs: test
+    if: ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch') && (github.event_name == 'push' || github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'preview')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Free runner disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/chromium /opt/microsoft
+          df -h
+
+      - name: Setup Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          token: ${{ secrets.EXPO_TOKEN }}
+          eas-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build preview APK locally
+        run: npx eas-cli build --platform android --profile preview --local --non-interactive --output ./app-preview.apk
+
+      - name: Upload preview APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-preview
+          path: ./app-preview.apk
+          if-no-files-found: error
+          retention-days: 7

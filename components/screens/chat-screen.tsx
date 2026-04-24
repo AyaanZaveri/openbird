@@ -40,7 +40,7 @@ import {
   ChevronDown,
   Copy,
   Globe,
-  Hourglass,
+  SearchCheckIcon,
   ImagePlus,
   Menu,
   MessageCirclePlus,
@@ -48,7 +48,7 @@ import {
   SendHorizontal,
   Timer,
   TriangleAlert,
-  X,
+  X
 } from 'lucide-react-native';
 import * as React from 'react';
 import { Alert, Image, Platform, Pressable, ScrollView, View } from 'react-native';
@@ -1071,9 +1071,9 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                       </Button>
                       <Button
                         size="icon"
-                        // variant={webSearchEnabled ? 'default' : 'secondary'}
-                        variant={'secondary'}
-                        className={`size-9 rounded-full ${webSearchEnabled ? 'bg-cyan-100/75 dark:bg-cyan-800/75' : ''}`}
+                        variant={webSearchEnabled ? 'default' : 'secondary'}
+                        // variant={'secondary'}
+                        className={`size-9 rounded-full`}
                         disabled={isSending}
                         onPress={() => void toggleWebSearch()}
                         accessibilityLabel={
@@ -1083,7 +1083,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                           as={Globe}
                           className={
                             webSearchEnabled
-                              ? 'text-cyan-500 dark:text-cyan-400 size-4.5'
+                              ? 'text-background size-4.5'
                               : 'text-muted-foreground size-4.5'
                           }
                         />
@@ -1247,20 +1247,21 @@ function ChatBubble({
 
 function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvocation }) {
   if (toolInvocation.toolName === 'webSearch') {
-    const queryPreview =
-      toolInvocation.input?.queries.join(', ') ||
-      toolInvocation.inputText?.trim() ||
-      'Searching...';
+    const queryPreview = getWebSearchQueryPreview(toolInvocation);
 
     if (toolInvocation.state !== 'output-available') {
       return (
-        <View className="border-border/70 bg-muted/40 flex-row items-start gap-3 rounded-2xl border px-3 py-2.5">
-          <Icon as={Hourglass} className="text-muted-foreground mt-0.5 size-4" />
-          <View className="flex-1 gap-1">
+        <View className="border-border/50 bg-amber-500/2 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5">
+          <Icon as={SearchCheckIcon} className="text-amber-600 size-4 dark:text-amber-400" />
+          <View className={queryPreview ? 'flex-1 gap-0.5' : 'flex-1'}>
             <Text className="text-sm font-medium">Searching the web...</Text>
-            <Text className="text-muted-foreground text-sm" numberOfLines={3}>
-              {queryPreview}
-            </Text>
+            {queryPreview ? (
+              <Text
+                className="text-muted-foreground text-sm font-mono tracking-tighter mr-2"
+                numberOfLines={2}>
+                {queryPreview}
+              </Text>
+            ) : null}
           </View>
         </View>
       );
@@ -1270,16 +1271,20 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
 
     return (
       <View className="border-border/50 bg-primary/2 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5">
-        <Icon as={Globe} className="text-primary mt-0.5 size-4" />
-        <View className="flex-1">
+        <Icon as={Globe} className="text-primary size-4" />
+        <View className={queryPreview ? 'flex-1 gap-0.5' : 'flex-1'}>
           <Text className="text-sm font-medium">
             {resultCount > 0
               ? `Looked at ${resultCount} sources`
               : 'Web search returned no results'}
           </Text>
-          <Text className="text-muted-foreground text-sm font-mono tracking-tighter" numberOfLines={2}>
-            {queryPreview}
-          </Text>
+          {queryPreview ? (
+            <Text
+              className="text-muted-foreground text-sm font-mono tracking-tighter mr-2"
+              numberOfLines={2}>
+              {queryPreview}
+            </Text>
+          ) : null}
         </View>
       </View>
     );
@@ -1290,7 +1295,7 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
   if (toolInvocation.state !== 'output-available') {
     return (
       <View className="border-border/70 bg-muted/40 flex-row items-start gap-3 rounded-2xl border px-3 py-2.5">
-        <Icon as={Hourglass} className="text-muted-foreground mt-0.5 size-4" />
+        <Icon as={SearchCheckIcon} className="text-muted-foreground mt-0.5 size-4" />
         <View className="flex-1 gap-1">
           <Text className="text-sm font-medium">Saving to memory...</Text>
           {preview ? (
@@ -1331,4 +1336,35 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
       </View>
     </View>
   );
+}
+
+function getWebSearchQueryPreview(toolInvocation: Extract<ToolInvocation, { toolName: 'webSearch' }>) {
+  const directQueries = toolInvocation.input?.queries
+    ?.map((query) => query.trim())
+    .filter(Boolean);
+
+  if (directQueries?.length) {
+    return directQueries.join(', ');
+  }
+
+  const rawInput = toolInvocation.inputText?.trim();
+  if (!rawInput) {
+    return '';
+  }
+
+  try {
+    const parsed = JSON.parse(rawInput) as { queries?: unknown };
+    if (!Array.isArray(parsed.queries)) {
+      return '';
+    }
+
+    const parsedQueries = parsed.queries
+      .filter((query): query is string => typeof query === 'string')
+      .map((query) => query.trim())
+      .filter(Boolean);
+
+    return parsedQueries.join(', ');
+  } catch {
+    return '';
+  }
 }

@@ -20,20 +20,38 @@ export type Message = {
   toolInvocations?: ToolInvocation[];
 };
 
-export type ToolInvocation = {
-  toolCallId: string;
-  toolName: 'updateMemory';
-  state: 'input-streaming' | 'input-available' | 'output-available';
-  inputText?: string;
-  input?: {
-    memory: string;
-    reason?: string;
-  };
-  output?: {
-    status: 'saved' | 'unchanged' | 'error';
-    summary: string;
-  };
-};
+export type ToolInvocation =
+  | {
+      toolCallId: string;
+      toolName: 'updateMemory';
+      state: 'input-streaming' | 'input-available' | 'output-available';
+      inputText?: string;
+      input?: {
+        memory: string;
+        reason?: string;
+      };
+      output?: {
+        status: 'saved' | 'unchanged' | 'error';
+        summary: string;
+      };
+    }
+  | {
+      toolCallId: string;
+      toolName: 'webSearch';
+      state: 'input-streaming' | 'input-available' | 'output-available';
+      inputText?: string;
+      input?: {
+        queries: string[];
+      };
+      output?: {
+        results: Array<{
+          title: string;
+          url: string;
+          snippet: string;
+          date?: string;
+        }>;
+      };
+    };
 
 export type ChatThread = {
   id: string;
@@ -51,24 +69,49 @@ const attachmentSchema = z.object({
   base64: z.string(),
 });
 
-const toolInvocationSchema = z.object({
-  toolCallId: z.string(),
-  toolName: z.literal('updateMemory'),
-  state: z.enum(['input-streaming', 'input-available', 'output-available']),
-  inputText: z.string().optional(),
-  input: z
-    .object({
-      memory: z.string(),
-      reason: z.string().optional(),
-    })
-    .optional(),
-  output: z
-    .object({
-      status: z.enum(['saved', 'unchanged', 'error']),
-      summary: z.string(),
-    })
-    .optional(),
-});
+const toolInvocationSchema = z.discriminatedUnion('toolName', [
+  z.object({
+    toolCallId: z.string(),
+    toolName: z.literal('updateMemory'),
+    state: z.enum(['input-streaming', 'input-available', 'output-available']),
+    inputText: z.string().optional(),
+    input: z
+      .object({
+        memory: z.string(),
+        reason: z.string().optional(),
+      })
+      .optional(),
+    output: z
+      .object({
+        status: z.enum(['saved', 'unchanged', 'error']),
+        summary: z.string(),
+      })
+      .optional(),
+  }),
+  z.object({
+    toolCallId: z.string(),
+    toolName: z.literal('webSearch'),
+    state: z.enum(['input-streaming', 'input-available', 'output-available']),
+    inputText: z.string().optional(),
+    input: z
+      .object({
+        queries: z.array(z.string()),
+      })
+      .optional(),
+    output: z
+      .object({
+        results: z.array(
+          z.object({
+            title: z.string(),
+            url: z.string(),
+            snippet: z.string(),
+            date: z.string().optional(),
+          })
+        ),
+      })
+      .optional(),
+  }),
+]);
 
 const messageSchema = z.object({
   id: z.string(),

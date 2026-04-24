@@ -24,6 +24,7 @@ import {
   settingsSchema,
   type SettingsForm,
 } from '@/lib/provider-settings';
+import { searchSearxng } from '@/lib/searxng';
 import { loadUserMemory, normalizeMemoryPrompt, saveUserMemory } from '@/lib/user-memory';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, stepCountIs, streamText, tool } from 'ai';
@@ -38,6 +39,7 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Globe,
   Hourglass,
   ImagePlus,
   Menu,
@@ -70,7 +72,89 @@ const updateMemoryInputSchema = z.object({
     .describe('Why this information matters for future conversations.'),
 });
 
-function buildChatSystemPrompt(memoryPrompt: string) {
+const webSearchInputSchema = z.object({
+  queries: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .max(80)
+        .describe('A short factual search query, ideally 3 to 6 words.')
+    )
+    .min(2)
+    .max(4)
+    .describe(
+      'Two to four meaningfully different web search queries covering different phrasings or angles of the user request.'
+    ),
+});
+
+const webSearchOutputSchema = z.array(
+  z.object({
+    title: z.string(),
+    url: z.string(),
+    snippet: z.string(),
+    date: z.string().optional(),
+  })
+);
+
+function getWebSearchContext() {
+  const fallbackDate = new Date();
+
+  try {
+    const resolved = Intl.DateTimeFormat().resolvedOptions();
+    const locale = resolved.locale || 'en-US';
+    const timeZone = resolved.timeZone || 'UTC';
+    const currentDate = new Date();
+
+    return {
+      locale,
+      timeZone,
+      currentYear: new Intl.DateTimeFormat(locale, { year: 'numeric', timeZone }).format(
+        currentDate
+      ),
+      currentDate: new Intl.DateTimeFormat(locale, {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone,
+      }).format(currentDate),
+      dayOfWeek: new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone }).format(currentDate),
+    };
+  } catch {
+    return {
+      locale: 'en-US',
+      timeZone: 'UTC',
+      currentYear: `${fallbackDate.getFullYear()}`,
+      currentDate: fallbackDate.toDateString(),
+      dayOfWeek: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(fallbackDate),
+    };
+  }
+}
+
+function buildWebSearchSystemPrompt() {
+  const context = getWebSearchContext();
+
+  return [
+    'Web search is enabled for this conversation.',
+    'Call the webSearch tool first when the user needs real-time, factual, or time-sensitive information.',
+    'Do not use webSearch for pure math, coding syntax, timeless conceptual questions, or opinions.',
+    'When you use webSearch, generate 2 to 4 short factual queries that are meaningfully different from each other.',
+    `At least one query must be anchored to the current year: ${context.currentYear}.`,
+    'Keep queries short and factual. Three to six words is ideal.',
+    'Synthesize across the returned results instead of leaning on a single source or over-quoting snippets.',
+    'If results conflict, seem dated, or are sparse, say so briefly and then answer as well as you can.',
+    'This app may be using a smaller Ollama model, so keep tool use efficient and result synthesis concise.',
+    `Current date: ${context.currentDate}`,
+    `Current year: ${context.currentYear}`,
+    `Day of week: ${context.dayOfWeek}`,
+    `User locale: ${context.locale}`,
+    `User timezone: ${context.timeZone}`,
+  ].join('\n');
+}
+
+function buildChatSystemPrompt(memoryPrompt: string, webSearchEnabled: boolean) {
   const sections = [
     'You are OpenBird, a helpful assistant.',
     'Use the saved memory only when it improves the current conversation. Do not mention the memory block unless it is relevant.',
@@ -81,6 +165,10 @@ function buildChatSystemPrompt(memoryPrompt: string) {
 
   if (memoryPrompt.trim()) {
     sections.push(`Saved user memory:\n${memoryPrompt.trim()}`);
+  }
+
+  if (webSearchEnabled) {
+    sections.push(buildWebSearchSystemPrompt());
   }
 
   return sections.join('\n\n');
@@ -107,6 +195,34 @@ function upsertToolInvocation(
   );
 }
 
+function createStreamingMemoryInvocation(
+  toolCallId: string,
+  toolInvocation: Extract<ToolInvocation, { toolName: 'updateMemory' }> | null
+): Extract<ToolInvocation, { toolName: 'updateMemory' }> {
+  return {
+    toolCallId,
+    toolName: 'updateMemory',
+    state: 'input-streaming',
+    inputText: toolInvocation?.inputText ?? '',
+    input: toolInvocation?.input,
+    output: toolInvocation?.output,
+  };
+}
+
+function createStreamingWebSearchInvocation(
+  toolCallId: string,
+  toolInvocation: Extract<ToolInvocation, { toolName: 'webSearch' }> | null
+): Extract<ToolInvocation, { toolName: 'webSearch' }> {
+  return {
+    toolCallId,
+    toolName: 'webSearch',
+    state: 'input-streaming',
+    inputText: toolInvocation?.inputText ?? '',
+    input: toolInvocation?.input,
+    output: toolInvocation?.output,
+  };
+}
+
 function sanitizeGeneratedTitle(value: string, fallback: string) {
   const normalized = value.replace(/["'`]/g, '').replace(/\s+/g, ' ').trim();
   return truncateTitle(normalized || fallback, 40);
@@ -124,6 +240,7 @@ export function ChatScreen() {
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null);
   const [isSending, setIsSending] = React.useState(false);
   const [isModelSheetOpen, setIsModelSheetOpen] = React.useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = React.useState(false);
   const [memoryPrompt, setMemoryPrompt] = React.useState('');
   const memoryPromptRef = React.useRef('');
 
@@ -208,7 +325,7 @@ export function ChatScreen() {
 
       const result = streamText({
         model: provider(parsedSettings.data.model),
-        system: buildChatSystemPrompt(memoryPromptRef.current),
+        system: buildChatSystemPrompt(memoryPromptRef.current, webSearchEnabled),
         stopWhen: stepCountIs(5),
         tools: {
           updateMemory: tool({
@@ -270,6 +387,37 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
               }
             },
           }),
+          ...(webSearchEnabled
+            ? {
+                webSearch: tool({
+                  description:
+                    'Search the web for recent or factual information using 2 to 4 short queries and return concise source snippets.',
+                  inputSchema: webSearchInputSchema,
+                  execute: async ({ queries }) => {
+                    const settledResults = await Promise.all(
+                      queries.map((query) =>
+                        searchSearxng(query, { categories: 'general', language: 'en' })
+                      )
+                    );
+
+                    const deduped = new Map<string, (typeof settledResults)[number][number]>();
+
+                    for (const resultSet of settledResults) {
+                      for (const resultItem of resultSet) {
+                        const normalizedUrl = resultItem.url.trim();
+                        if (!normalizedUrl || deduped.has(normalizedUrl)) {
+                          continue;
+                        }
+
+                        deduped.set(normalizedUrl, resultItem);
+                      }
+                    }
+
+                    return [...deduped.values()].slice(0, 12);
+                  },
+                }),
+              }
+            : {}),
         },
         messages: nextMessages
           .filter(
@@ -315,7 +463,10 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
           continue;
         }
 
-        if (part.type === 'tool-input-start' && part.toolName === 'updateMemory') {
+        if (
+          part.type === 'tool-input-start' &&
+          (part.toolName === 'updateMemory' || part.toolName === 'webSearch')
+        ) {
           const toolCallId = getToolCallId(part);
 
           updateChatMessages(chatId, (current) =>
@@ -327,14 +478,16 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                     toolInvocations: upsertToolInvocation(
                       message.toolInvocations,
                       toolCallId,
-                      (toolInvocation) => ({
-                        toolCallId,
-                        toolName: 'updateMemory',
-                        state: 'input-streaming',
-                        inputText: toolInvocation?.inputText ?? '',
-                        input: toolInvocation?.input,
-                        output: toolInvocation?.output,
-                      })
+                      (toolInvocation) =>
+                        part.toolName === 'updateMemory'
+                          ? createStreamingMemoryInvocation(
+                              toolCallId,
+                              toolInvocation?.toolName === 'updateMemory' ? toolInvocation : null
+                            )
+                          : createStreamingWebSearchInvocation(
+                              toolCallId,
+                              toolInvocation?.toolName === 'webSearch' ? toolInvocation : null
+                            )
                     ),
                   }
                 : message
@@ -349,22 +502,54 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
           updateChatMessages(chatId, (current) =>
             current.map((message) =>
               message.id === assistantMessageId
-                ? {
-                    ...message,
-                    pending: false,
-                    toolInvocations: upsertToolInvocation(
-                      message.toolInvocations,
-                      toolCallId,
-                      (toolInvocation) => ({
+                ? (() => {
+                    const existingToolInvocation = message.toolInvocations?.find(
+                      (toolInvocation) => toolInvocation.toolCallId === toolCallId
+                    );
+
+                    if (!existingToolInvocation) {
+                      return message;
+                    }
+
+                    return {
+                      ...message,
+                      pending: false,
+                      toolInvocations: upsertToolInvocation(
+                        message.toolInvocations,
                         toolCallId,
-                        toolName: 'updateMemory',
-                        state: 'input-streaming',
-                        inputText: `${toolInvocation?.inputText ?? ''}${part.delta}`,
-                        input: toolInvocation?.input,
-                        output: toolInvocation?.output,
-                      })
-                    ),
-                  }
+                        (toolInvocation) =>
+                          existingToolInvocation.toolName === 'updateMemory'
+                            ? {
+                                toolCallId,
+                                toolName: 'updateMemory',
+                                state: 'input-streaming',
+                                inputText: `${toolInvocation?.inputText ?? ''}${part.delta}`,
+                                input:
+                                  toolInvocation?.toolName === 'updateMemory'
+                                    ? toolInvocation.input
+                                    : undefined,
+                                output:
+                                  toolInvocation?.toolName === 'updateMemory'
+                                    ? toolInvocation.output
+                                    : undefined,
+                              }
+                            : {
+                                toolCallId,
+                                toolName: 'webSearch',
+                                state: 'input-streaming',
+                                inputText: `${toolInvocation?.inputText ?? ''}${part.delta}`,
+                                input:
+                                  toolInvocation?.toolName === 'webSearch'
+                                    ? toolInvocation.input
+                                    : undefined,
+                                output:
+                                  toolInvocation?.toolName === 'webSearch'
+                                    ? toolInvocation.output
+                                    : undefined,
+                              }
+                      ),
+                    };
+                  })()
                 : message
             )
           );
@@ -390,7 +575,42 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                         state: 'input-available',
                         inputText: toolInvocation?.inputText,
                         input: parsedInput.success ? parsedInput.data : undefined,
-                        output: toolInvocation?.output,
+                        output:
+                          toolInvocation?.toolName === 'updateMemory'
+                            ? toolInvocation.output
+                            : undefined,
+                      })
+                    ),
+                  }
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type === 'tool-call' && part.toolName === 'webSearch') {
+          const toolCallId = getToolCallId(part);
+          const parsedInput = webSearchInputSchema.safeParse(part.input);
+
+          updateChatMessages(chatId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    pending: false,
+                    toolInvocations: upsertToolInvocation(
+                      message.toolInvocations,
+                      toolCallId,
+                      (toolInvocation) => ({
+                        toolCallId,
+                        toolName: 'webSearch',
+                        state: 'input-available',
+                        inputText: toolInvocation?.inputText,
+                        input: parsedInput.success ? parsedInput.data : undefined,
+                        output:
+                          toolInvocation?.toolName === 'webSearch'
+                            ? toolInvocation.output
+                            : undefined,
                       })
                     ),
                   }
@@ -424,7 +644,10 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                         toolName: 'updateMemory',
                         state: 'output-available',
                         inputText: toolInvocation?.inputText,
-                        input: toolInvocation?.input,
+                        input:
+                          toolInvocation?.toolName === 'updateMemory'
+                            ? toolInvocation.input
+                            : undefined,
                         output: {
                           status:
                             output.status === 'saved' ||
@@ -436,6 +659,40 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                             typeof output.summary === 'string'
                               ? output.summary
                               : 'Unable to update memory.',
+                        },
+                      })
+                    ),
+                  }
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type === 'tool-result' && part.toolName === 'webSearch') {
+          const toolCallId = getToolCallId(part);
+          const parsedOutput = webSearchOutputSchema.safeParse(part.output);
+
+          updateChatMessages(chatId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    pending: false,
+                    toolInvocations: upsertToolInvocation(
+                      message.toolInvocations,
+                      toolCallId,
+                      (toolInvocation) => ({
+                        toolCallId,
+                        toolName: 'webSearch',
+                        state: 'output-available',
+                        inputText: toolInvocation?.inputText,
+                        input:
+                          toolInvocation?.toolName === 'webSearch'
+                            ? toolInvocation.input
+                            : undefined,
+                        output: {
+                          results: parsedOutput.success ? parsedOutput.data : [],
                         },
                       })
                     ),
@@ -658,6 +915,18 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
     void Haptics.selectionAsync();
   }
 
+  async function toggleWebSearch() {
+    const nextValue = !webSearchEnabled;
+    setWebSearchEnabled(nextValue);
+
+    if (nextValue) {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      return;
+    }
+
+    await Haptics.selectionAsync();
+  }
+
   const lastAssistantMessageId = React.useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (messages[index]?.role === 'assistant') {
@@ -790,15 +1059,35 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                   />
 
                   <View className="mt-2 flex-row items-center justify-between">
-                    <Button
-                      size="icon"
-                      variant="secondary"
-                      className="size-9 rounded-full"
-                      disabled={isSending}
-                      onPress={() => void pickImages()}
-                      accessibilityLabel="Add images">
-                      <Icon as={ImagePlus} className="text-secondary-foreground size-4.5" />
-                    </Button>
+                    <View className="flex-row items-center gap-2">
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="size-9 rounded-full"
+                        disabled={isSending}
+                        onPress={() => void pickImages()}
+                        accessibilityLabel="Add images">
+                        <Icon as={ImagePlus} className="text-secondary-foreground size-4.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant={webSearchEnabled ? 'default' : 'secondary'}
+                        className="size-9 rounded-full"
+                        disabled={isSending}
+                        onPress={() => void toggleWebSearch()}
+                        accessibilityLabel={
+                          webSearchEnabled ? 'Disable web search' : 'Enable web search'
+                        }>
+                        <Icon
+                          as={Globe}
+                          className={
+                            webSearchEnabled
+                              ? 'text-primary-foreground size-4.5'
+                              : 'text-secondary-foreground size-4.5'
+                          }
+                        />
+                      </Button>
+                    </View>
 
                     <Button
                       size="icon"
@@ -877,12 +1166,7 @@ function ChatBubble({
         </View>
       ) : null}
 
-      <View
-        className={
-          isUser
-            ? userBubbleClass
-            : 'w-full px-1 py-1'
-        }>
+      <View className={isUser ? userBubbleClass : 'w-full px-1 py-1'}>
         {!isUser && reasoningText ? (
           <Accordion type="single" collapsible className="mb-2">
             <AccordionItem value={`reasoning-${message.id}`} className="border-0">
@@ -961,6 +1245,45 @@ function ChatBubble({
 }
 
 function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvocation }) {
+  if (toolInvocation.toolName === 'webSearch') {
+    const queryPreview =
+      toolInvocation.input?.queries.join(', ') ||
+      toolInvocation.inputText?.trim() ||
+      'Searching...';
+
+    if (toolInvocation.state !== 'output-available') {
+      return (
+        <View className="border-border/70 bg-muted/40 flex-row items-start gap-3 rounded-2xl border px-3 py-2.5">
+          <Icon as={Hourglass} className="text-muted-foreground mt-0.5 size-4" />
+          <View className="flex-1 gap-1">
+            <Text className="text-sm font-medium">Searching the web...</Text>
+            <Text className="text-muted-foreground text-sm" numberOfLines={3}>
+              {queryPreview}
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    const resultCount = toolInvocation.output?.results.length ?? 0;
+
+    return (
+      <View className="border-border/70 bg-muted/30 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5">
+        <Icon as={Globe} className="text-primary mt-0.5 size-4" />
+        <View className="flex-1">
+          <Text className="text-sm font-medium">
+            {resultCount > 0
+              ? `Looked at ${resultCount} sources`
+              : 'Web search returned no results'}
+          </Text>
+          <Text className="text-muted-foreground text-sm" numberOfLines={2}>
+            {queryPreview}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   const preview = toolInvocation.input?.memory?.trim() || toolInvocation.inputText?.trim();
 
   if (toolInvocation.state !== 'output-available') {

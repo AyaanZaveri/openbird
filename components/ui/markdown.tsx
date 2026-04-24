@@ -21,11 +21,13 @@ type BlockNode =
   | { type: 'paragraph'; text: string }
   | { type: 'blockquote'; text: string }
   | { type: 'code'; text: string }
+  | { type: 'table'; headers: string[]; rows: string[][] }
   | { type: 'ul'; items: string[] }
   | { type: 'ol'; items: string[] };
 
 const BLOCK_MARKER = /^(#{1,6}	|#{1,6} |```|>|[-*] |\d+\. )/;
 const INLINE_MARKER = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^\)]+\))/;
+const TABLE_COLUMN_WIDTH = 220;
 
 function MarkdownText({ children }: MarkdownTextProps) {
   const { theme } = useUniwind();
@@ -77,6 +79,30 @@ function parseMarkdown(input: string): BlockNode[] {
         text: headingMatch[2].trim(),
       });
       index += 1;
+      continue;
+    }
+
+    if (index + 1 < lines.length && isMarkdownTableHeader(line, lines[index + 1] ?? '')) {
+      const headers = parseTableRow(line);
+      const rows: string[][] = [];
+      index += 2;
+
+      while (index < lines.length) {
+        const current = lines[index] ?? '';
+        if (!current.trim() || !current.includes('|')) {
+          break;
+        }
+
+        const row = parseTableRow(current);
+        if (row.length === 0) {
+          break;
+        }
+
+        rows.push(normalizeTableRow(row, headers.length));
+        index += 1;
+      }
+
+      blocks.push({ type: 'table', headers, rows });
       continue;
     }
 
@@ -145,6 +171,10 @@ function parseMarkdown(input: string): BlockNode[] {
         break;
       }
 
+      if (paragraphLines.length > 0 && isMarkdownTableHeader(current, lines[index + 1] ?? '')) {
+        break;
+      }
+
       paragraphLines.push(current.trim());
       index += 1;
     }
@@ -153,6 +183,42 @@ function parseMarkdown(input: string): BlockNode[] {
   }
 
   return blocks;
+}
+
+function isMarkdownTableHeader(headerLine: string, dividerLine: string) {
+  if (!headerLine.includes('|')) {
+    return false;
+  }
+
+  const headerCells = parseTableRow(headerLine);
+  const dividerCells = parseTableRow(dividerLine);
+
+  return (
+    headerCells.length > 0 &&
+    headerCells.length === dividerCells.length &&
+    dividerCells.every((cell) => /^:?-{3,}:?$/.test(cell))
+  );
+}
+
+function parseTableRow(line: string) {
+  const normalized = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  if (!normalized) {
+    return [];
+  }
+
+  return normalized.split('|').map((cell) => cell.trim());
+}
+
+function normalizeTableRow(row: string[], width: number) {
+  if (row.length === width) {
+    return row;
+  }
+
+  if (row.length > width) {
+    return row.slice(0, width);
+  }
+
+  return [...row, ...Array.from({ length: width - row.length }, () => '')];
 }
 
 function parseInline(text: string): InlineNode[] {
@@ -288,6 +354,44 @@ function renderBlock(block: BlockNode, index: number, palette: (typeof THEME)['l
           className="rounded-xl border px-3 py-3"
           style={{ borderColor: palette.border, backgroundColor: palette.background }}>
           <Text className="font-mono">{block.text}</Text>
+        </ScrollView>
+      );
+    case 'table':
+      const tableWidth = block.headers.length * TABLE_COLUMN_WIDTH;
+
+      return (
+        <ScrollView key={key} horizontal showsHorizontalScrollIndicator>
+          <View
+            className="overflow-hidden rounded-xl border"
+            style={{ borderColor: palette.border, width: tableWidth }}>
+            <View
+              className="flex-row border-b"
+              style={{ borderBottomColor: palette.border, backgroundColor: palette.background }}>
+              {block.headers.map((header, cellIndex) => (
+                <View
+                  key={`${key}-header-${cellIndex}`}
+                  className="border-r px-3 py-2 last:border-r-0"
+                  style={{ borderRightColor: palette.border, width: TABLE_COLUMN_WIDTH }}>
+                  {renderRichText(header, palette, `${key}-header-${cellIndex}`, 'font-semibold')}
+                </View>
+              ))}
+            </View>
+            {block.rows.map((row, rowIndex) => (
+              <View
+                key={`${key}-row-${rowIndex}`}
+                className="flex-row border-b last:border-b-0"
+                style={{ borderBottomColor: palette.border }}>
+                {row.map((cell, cellIndex) => (
+                  <View
+                    key={`${key}-row-${rowIndex}-cell-${cellIndex}`}
+                    className="border-r px-3 py-2 last:border-r-0"
+                    style={{ borderRightColor: palette.border, width: TABLE_COLUMN_WIDTH }}>
+                    {renderRichText(cell, palette, `${key}-row-${rowIndex}-cell-${cellIndex}`)}
+                  </View>
+                ))}
+              </View>
+            ))}
+          </View>
         </ScrollView>
       );
     case 'ul':

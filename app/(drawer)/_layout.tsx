@@ -8,7 +8,7 @@ export default function DrawerLayout() {
       screenOptions={{
         headerShown: false,
         drawerType: 'slide',
-        swipeEdgeWidth: 400,
+        swipeEdgeWidth: 100,
         freezeOnBlur: true,
       }}>
       <Drawer.Screen name="index" options={{ title: 'Chat' }} />

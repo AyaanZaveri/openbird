@@ -1071,8 +1071,9 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                       </Button>
                       <Button
                         size="icon"
-                        variant={webSearchEnabled ? 'default' : 'secondary'}
-                        className="size-9 rounded-full"
+                        // variant={webSearchEnabled ? 'default' : 'secondary'}
+                        variant={'secondary'}
+                        className={`size-9 rounded-full ${webSearchEnabled ? 'bg-cyan-100/75' : ''}`}
                         disabled={isSending}
                         onPress={() => void toggleWebSearch()}
                         accessibilityLabel={
@@ -1082,8 +1083,8 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                           as={Globe}
                           className={
                             webSearchEnabled
-                              ? 'text-primary-foreground size-4.5'
-                              : 'text-secondary-foreground size-4.5'
+                              ? 'text-cyan-500 size-4.5'
+                              : 'text-muted-foreground size-4.5'
                           }
                         />
                       </Button>

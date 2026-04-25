@@ -1,9 +1,8 @@
 import { Text } from '@/components/ui/text';
-import { THEME } from '@/lib/theme';
+import { cn } from '@/lib/utils';
 import * as Linking from 'expo-linking';
 import * as React from 'react';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
-import { useUniwind } from 'uniwind';
 
 type MarkdownTextProps = {
   children: string;
@@ -32,15 +31,13 @@ const TABLE_MIN_WIDTH = 72;
 const TABLE_MAX_WIDTH = 340;
 
 function MarkdownText({ children }: MarkdownTextProps) {
-  const { theme } = useUniwind();
   const { width: windowWidth } = useWindowDimensions();
-  const palette = THEME[theme ?? 'light'];
   const blocks = React.useMemo(() => parseMarkdown(children), [children]);
   const availableTableWidth = Math.max(windowWidth - 40, 260);
 
   return (
     <View className="gap-3">
-      {blocks.map((block, index) => renderBlock(block, index, palette, availableTableWidth))}
+      {blocks.map((block, index) => renderBlock(block, index, availableTableWidth))}
     </View>
   );
 }
@@ -350,18 +347,7 @@ function getColumnWidths(headers: string[], rows: string[][], availableWidth: nu
   return widths.map((width) => Math.round(width));
 }
 
-function getTableColors(palette: (typeof THEME)['light']) {
-  const light = palette.background === '#ffffff';
-
-  return {
-    headerBackground: light ? 'rgba(8, 145, 178, 0.055)' : 'rgba(34, 211, 238, 0.12)',
-    headerBorder: light ? 'rgba(8, 145, 178, 0.10)' : 'rgba(34, 211, 238, 0.18)',
-    rowOddBackground: light ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.015)',
-    rowEvenBackground: light ? 'rgba(8, 145, 178, 0.022)' : 'rgba(255,255,255,0.035)',
-  };
-}
-
-function renderInlineNodes(nodes: InlineNode[], palette: (typeof THEME)['light'], keyPrefix: string) {
+function renderInlineNodes(nodes: InlineNode[], keyPrefix: string) {
   return nodes.map((node, index) => {
     const key = `${keyPrefix}-${index}`;
 
@@ -371,26 +357,18 @@ function renderInlineNodes(nodes: InlineNode[], palette: (typeof THEME)['light']
       case 'strong':
         return (
           <Text key={key} className="font-semibold">
-            {renderInlineNodes(node.children, palette, key)}
+            {renderInlineNodes(node.children, key)}
           </Text>
         );
       case 'em':
         return (
-          <Text key={key} style={{ fontStyle: 'italic' }}>
-            {renderInlineNodes(node.children, palette, key)}
+          <Text key={key} className="italic">
+            {renderInlineNodes(node.children, key)}
           </Text>
         );
       case 'code':
         return (
-          <Text
-            key={key}
-            className="font-mono"
-            style={{
-              backgroundColor: palette.background,
-              borderRadius: 6,
-              paddingHorizontal: 6,
-              paddingVertical: 2,
-            }}>
+          <Text key={key} className="bg-background font-mono rounded-md px-1.5 py-0.5">
             {node.value}
           </Text>
         );
@@ -398,27 +376,22 @@ function renderInlineNodes(nodes: InlineNode[], palette: (typeof THEME)['light']
         return (
           <Text
             key={key}
-            style={{ color: palette.primary, textDecorationLine: 'underline' as const }}
+            className="text-primary underline"
             onPress={() => {
               void Linking.openURL(node.href);
             }}>
-            {renderInlineNodes(node.children, palette, key)}
+            {renderInlineNodes(node.children, key)}
           </Text>
         );
     }
   });
 }
 
-function renderRichText(text: string, palette: (typeof THEME)['light'], key: string, className?: string) {
-  return <Text className={className}>{renderInlineNodes(parseInline(text), palette, key)}</Text>;
+function renderRichText(text: string, key: string, className?: string) {
+  return <Text className={className}>{renderInlineNodes(parseInline(text), key)}</Text>;
 }
 
-function renderBlock(
-  block: BlockNode,
-  index: number,
-  palette: (typeof THEME)['light'],
-  availableTableWidth: number
-) {
+function renderBlock(block: BlockNode, index: number, availableTableWidth: number) {
   const key = `markdown-${index}`;
 
   switch (block.type) {
@@ -434,16 +407,16 @@ function renderBlock(
 
       return (
         <View key={key}>
-          {renderRichText(block.text, palette, key, headingClassNames[block.level])}
+          {renderRichText(block.text, key, headingClassNames[block.level])}
         </View>
       );
     }
     case 'paragraph':
-      return <View key={key}>{renderRichText(block.text, palette, key)}</View>;
+      return <View key={key}>{renderRichText(block.text, key)}</View>;
     case 'blockquote':
       return (
-        <View key={key} className="border-l pl-3" style={{ borderLeftColor: palette.border }}>
-          {renderRichText(block.text, palette, key, 'text-muted-foreground')}
+        <View key={key} className="border-l border-border pl-3">
+          {renderRichText(block.text, key, 'text-muted-foreground')}
         </View>
       );
     case 'code':
@@ -452,15 +425,13 @@ function renderBlock(
           key={key}
           horizontal
           showsHorizontalScrollIndicator={false}
-          className="rounded-xl border px-3 py-3"
-          style={{ borderColor: palette.border, backgroundColor: palette.background }}>
+          className="bg-background rounded-xl border border-border px-3 py-3">
           <Text className="font-mono">{block.text}</Text>
         </ScrollView>
       );
     case 'table': {
       const columnWidths = getColumnWidths(block.headers, block.rows, availableTableWidth);
       const tableWidth = columnWidths.reduce((sum, width) => sum + width, 0);
-      const tableColors = getTableColors(palette);
 
       return (
         <ScrollView
@@ -469,26 +440,18 @@ function renderBlock(
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 2 }}>
           <View
-            className="overflow-hidden rounded-lg border"
+            className="bg-card overflow-hidden rounded-lg border border-border"
             style={{
-              borderColor: tableColors.headerBorder,
-              backgroundColor: palette.card,
               width: Math.max(tableWidth, availableTableWidth),
             }}>
-            <View
-              className="flex-row border-b"
-              style={{
-                borderBottomColor: tableColors.headerBorder,
-                backgroundColor: tableColors.headerBackground,
-              }}>
+            <View className="bg-muted/60 flex-row border-b border-border">
               {block.headers.map((header, cellIndex) => (
                 <View
                   key={`${key}-header-${cellIndex}`}
-                  className="justify-center border-r px-3 py-3 last:border-r-0"
-                  style={{ borderRightColor: tableColors.headerBorder, width: columnWidths[cellIndex] }}>
+                  className="justify-center border-r border-border px-3 py-3 last:border-r-0"
+                  style={{ width: columnWidths[cellIndex] }}>
                   {renderRichText(
                     header,
-                    palette,
                     `${key}-header-${cellIndex}`,
                     'text-sm font-semibold tracking-[-0.01em]'
                   )}
@@ -498,20 +461,20 @@ function renderBlock(
             {block.rows.map((row, rowIndex) => (
               <View
                 key={`${key}-row-${rowIndex}`}
-                className="flex-row border-b last:border-b-0"
-                style={{
-                  borderBottomColor: palette.border,
-                  backgroundColor:
-                    rowIndex % 2 === 0 ? tableColors.rowOddBackground : tableColors.rowEvenBackground,
-                }}>
+                className={cn(
+                  'flex-row',
+                  rowIndex === block.rows.length - 1 ? 'border-b-0' : 'border-b border-border',
+                  rowIndex % 2 === 0 ? 'bg-card' : 'bg-muted/30'
+                )}>
                 {row.map((cell, cellIndex) => (
                   <View
                     key={`${key}-row-${rowIndex}-cell-${cellIndex}`}
-                    className="justify-center border-r px-3 py-3 last:border-r-0"
-                    style={{ borderRightColor: palette.border, width: columnWidths[cellIndex] }}>
+                    className={cn(
+                      'border-r border-border justify-center px-3 py-3 last:border-r-0'
+                    )}
+                    style={{ width: columnWidths[cellIndex] }}>
                     {renderRichText(
                       cell,
-                      palette,
                       `${key}-row-${rowIndex}-cell-${cellIndex}`,
                       'text-[15px] leading-6'
                     )}
@@ -529,7 +492,7 @@ function renderBlock(
           {block.items.map((item, itemIndex) => (
             <View key={`${key}-item-${itemIndex}`} className="flex-row gap-2 pr-2">
               <Text>{'\u2022'}</Text>
-              <View className="flex-1">{renderRichText(item, palette, `${key}-item-${itemIndex}`)}</View>
+              <View className="flex-1">{renderRichText(item, `${key}-item-${itemIndex}`)}</View>
             </View>
           ))}
         </View>
@@ -540,7 +503,7 @@ function renderBlock(
           {block.items.map((item, itemIndex) => (
             <View key={`${key}-item-${itemIndex}`} className="flex-row gap-2 pr-2">
               <Text className="font-medium">{`${itemIndex + 1}.`}</Text>
-              <View className="flex-1">{renderRichText(item, palette, `${key}-item-${itemIndex}`)}</View>
+              <View className="flex-1">{renderRichText(item, `${key}-item-${itemIndex}`)}</View>
             </View>
           ))}
         </View>

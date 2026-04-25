@@ -18,7 +18,7 @@ import { PortalHost } from '@rn-primitives/portal';
 import { SplashScreen, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { Uniwind, useUniwind } from 'uniwind';
@@ -63,7 +63,11 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <KeyboardProvider>
+      <KeyboardProvider
+        navigationBarTranslucent={Platform.OS === 'android'}
+        preserveEdgeToEdge={Platform.OS === 'android'}
+        preload={Platform.OS === 'android'}
+        statusBarTranslucent={Platform.OS === 'android'}>
         <BottomSheetModalProvider>
           <ChatHistoryProvider>
             <ThemeProvider value={NAV_THEME[theme ?? 'light']}>

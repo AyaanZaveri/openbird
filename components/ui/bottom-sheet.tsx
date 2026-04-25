@@ -33,6 +33,7 @@ const BottomSheet = React.forwardRef<BottomSheetModalPrimitive, BottomSheetModal
     {
       backdropComponent,
       backgroundStyle,
+      android_keyboardInputMode = Platform.OS === 'android' ? 'adjustResize' : undefined,
       children,
       enableDismissOnClose = true,
       enableDynamicSizing = true,
@@ -75,6 +76,7 @@ const BottomSheet = React.forwardRef<BottomSheetModalPrimitive, BottomSheetModal
           },
           backgroundStyle,
         ]}
+        android_keyboardInputMode={android_keyboardInputMode}
         enableBlurKeyboardOnGesture={enableBlurKeyboardOnGesture}
         enableDismissOnClose={enableDismissOnClose}
         enableDynamicSizing={enableDynamicSizing}

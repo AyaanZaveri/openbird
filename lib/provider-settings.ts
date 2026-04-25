@@ -14,6 +14,14 @@ export type ModelOption = {
   value: string;
 };
 
+type CachedModelsEntry = {
+  expiresAt: number;
+  result: {
+    models: ModelOption[];
+    error: string | null;
+  };
+};
+
 type DiscoveredModelsResponse = {
   models: Array<{
     id: string;
@@ -22,6 +30,8 @@ type DiscoveredModelsResponse = {
 };
 
 export const SETTINGS_STORAGE_KEY = 'chat.provider-settings';
+const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+const modelDiscoveryCache = new Map<string, CachedModelsEntry>();
 
 export const settingsSchema = z.object({
   apiKey: z.string(),
@@ -70,6 +80,13 @@ export async function loadAvailableModels(form: SettingsForm) {
     return { models: [] as ModelOption[], error: null };
   }
 
+  const cacheKey = `${parsedBaseUrl.data}::${form.apiKey}`;
+  const cachedResult = modelDiscoveryCache.get(cacheKey);
+
+  if (cachedResult && cachedResult.expiresAt > Date.now()) {
+    return cachedResult.result;
+  }
+
   try {
     const provider = createOpenAICompatible({
       name: 'custom-provider',
@@ -104,15 +121,29 @@ export async function loadAvailableModels(form: SettingsForm) {
       left.label.localeCompare(right.label)
     );
 
-    return {
+    const result = {
       models,
       error: models.length === 0 ? 'No models were returned for this provider.' : null,
     };
+
+    modelDiscoveryCache.set(cacheKey, {
+      expiresAt: Date.now() + MODEL_CACHE_TTL_MS,
+      result,
+    });
+
+    return result;
   } catch (error) {
-    return {
+    const result = {
       models: [] as ModelOption[],
       error: error instanceof Error ? error.message : 'Unable to load available models.',
     };
+
+    modelDiscoveryCache.set(cacheKey, {
+      expiresAt: Date.now() + 15 * 1000,
+      result,
+    });
+
+    return result;
   }
 }
 

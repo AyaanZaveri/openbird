@@ -15,9 +15,10 @@ import {
   type ModelOption,
   type SettingsForm,
 } from '@/lib/provider-settings';
+import { cn } from '@/lib/utils';
 import { Check, RotateCwIcon, X } from 'lucide-react-native';
 import * as React from 'react';
-import { Pressable, View, useWindowDimensions } from 'react-native';
+import { InteractionManager, Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type ModelBottomSheetProps = {
@@ -27,6 +28,10 @@ type ModelBottomSheetProps = {
   value: string;
   onSelect: (model: string) => void;
 };
+
+type ModelRow =
+  | { key: string; type: 'typed'; label: string; value: string }
+  | { key: string; type: 'model'; label: string; value: string; isLast: boolean };
 
 export function ModelBottomSheet({
   open,
@@ -42,14 +47,17 @@ export function ModelBottomSheet({
   const [isLoadingModels, setIsLoadingModels] = React.useState(false);
   const [modelLoadError, setModelLoadError] = React.useState<string | null>(null);
   const [modelSearch, setModelSearch] = React.useState('');
+  const [searchInputResetKey, setSearchInputResetKey] = React.useState(0);
 
   React.useEffect(() => {
     if (open) {
-      bottomSheetRef.current?.present();
       setModelSearch('');
-    } else {
-      bottomSheetRef.current?.dismiss();
+      setSearchInputResetKey((current) => current + 1);
+      bottomSheetRef.current?.present();
+      return;
     }
+
+    bottomSheetRef.current?.dismiss();
   }, [open]);
 
   const refreshModels = React.useCallback(async () => {
@@ -65,12 +73,14 @@ export function ModelBottomSheet({
       return;
     }
 
-    const timer = setTimeout(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
       void refreshModels();
-    }, 250);
+    });
 
-    return () => clearTimeout(timer);
+    return () => task.cancel();
   }, [open, refreshModels, settings.apiKey, settings.baseUrl]);
+
+  const normalizedModelSearch = React.useMemo(() => modelSearch.trim(), [modelSearch]);
 
   const modelOptions = React.useMemo(() => {
     if (!value || availableModels.some((model) => model.value === value)) {
@@ -81,7 +91,7 @@ export function ModelBottomSheet({
   }, [availableModels, value]);
 
   const filteredModelOptions = React.useMemo(() => {
-    const query = modelSearch.trim();
+    const query = normalizedModelSearch;
 
     return modelOptions
       .map((model) => ({ model, score: getFuzzyModelScore(query, model) }))
@@ -94,24 +104,21 @@ export function ModelBottomSheet({
         return left.model.label.localeCompare(right.model.label);
       })
       .map((entry) => entry.model);
-  }, [modelOptions, modelSearch]);
+  }, [modelOptions, normalizedModelSearch]);
 
   const shouldShowUseTypedModel =
-    modelSearch.trim().length > 0 &&
-    !modelOptions.some((model) => model.value === modelSearch.trim());
+    normalizedModelSearch.length > 0 &&
+    !modelOptions.some((model) => model.value === normalizedModelSearch);
 
   const modelRows = React.useMemo(() => {
-    const rows: Array<
-      | { key: string; type: 'typed'; label: string; value: string }
-      | { key: string; type: 'model'; label: string; value: string; isLast: boolean }
-    > = [];
+    const rows: ModelRow[] = [];
 
     if (shouldShowUseTypedModel) {
       rows.push({
-        key: `typed-${modelSearch.trim()}`,
+        key: `typed-${normalizedModelSearch}`,
         type: 'typed',
-        label: `Use "${modelSearch.trim()}"`,
-        value: modelSearch.trim(),
+        label: `Use "${normalizedModelSearch}"`,
+        value: normalizedModelSearch,
       });
     }
 
@@ -126,11 +133,31 @@ export function ModelBottomSheet({
     });
 
     return rows;
-  }, [filteredModelOptions, modelSearch, shouldShowUseTypedModel]);
+  }, [filteredModelOptions, normalizedModelSearch, shouldShowUseTypedModel]);
 
   const modelSheetSnapPoints = React.useMemo(
     () => ['65%', Math.min(windowHeight - insets.top - 16, 960)],
     [insets.top, windowHeight]
+  );
+
+  const renderModelRow = React.useCallback(
+    ({ item, index }: { item: ModelRow; index: number }) => (
+      <Pressable
+        className={cn(
+          'active:bg-accent flex-row items-center justify-between rounded-md px-4 py-3.5',
+          index % 2 === 0 ? 'bg-card' : 'bg-muted/50'
+        )}
+        onPress={() => {
+          onSelect(item.value);
+          onOpenChange(false);
+        }}>
+        <Text className={item.type === 'typed' ? 'text-sm font-medium' : 'text-sm'}>
+          {item.label}
+        </Text>
+        {item.value === value ? <Icon as={Check} className="text-foreground size-4" /> : null}
+      </Pressable>
+    ),
+    [onOpenChange, onSelect, value]
   );
 
   return (
@@ -139,95 +166,90 @@ export function ModelBottomSheet({
       onDismiss={() => onOpenChange(false)}
       enableDynamicSizing={false}
       enablePanDownToClose={false}
-      keyboardBehavior="extend"
+      keyboardBehavior={Platform.OS === 'android' ? 'fillParent' : 'interactive'}
+      android_keyboardInputMode="adjustResize"
       snapPoints={modelSheetSnapPoints}>
-      <BottomSheetFlatList
-        data={modelRows}
-        keyExtractor={(item) => item.key}
-        keyboardShouldPersistTaps="handled"
-        stickyHeaderIndices={[0]}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 8 }}
-        ListHeaderComponent={
-          <View className="bg-card border border-border border-y-0 px-5 pt-1 pb-3">
-            <BottomSheetHeader>
-              <BottomSheetTitle>Choose Model</BottomSheetTitle>
-              <BottomSheetDescription>
-                Search your provider models or enter a custom model ID.
-              </BottomSheetDescription>
-            </BottomSheetHeader>
+      <View className="flex-1">
+        <View className="bg-card border-x border-border px-5 pt-1 pb-3">
+          <BottomSheetHeader>
+            <BottomSheetTitle>Choose Model</BottomSheetTitle>
+            <BottomSheetDescription>
+              Search your provider models or enter a custom model ID.
+            </BottomSheetDescription>
+          </BottomSheetHeader>
 
-            <View className="mt-4 flex-row items-center gap-2">
-              <View className="border-input bg-card min-w-0 flex-1 flex-row items-center gap-2 rounded-xl border pr-1.5 pl-3">
-                <BottomSheetInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  placeholder={'Search or enter a model ID'}
-                  value={modelSearch}
-                  onChangeText={setModelSearch}
-                  style={{
-                    flex: 1,
-                    minHeight: 44,
-                    borderWidth: 0,
-                    backgroundColor: 'transparent',
-                    paddingHorizontal: 0,
+          <View className="mt-4 flex-row items-center gap-2">
+            <View className="border-input bg-card min-w-0 flex-1 flex-row items-center gap-2 rounded-xl border pr-1.5 pl-3">
+              <BottomSheetInput
+                key={`model-search-${searchInputResetKey}`}
+                autoCapitalize="none"
+                autoCorrect={false}
+                defaultValue={modelSearch}
+                placeholder="Search or enter a model ID"
+                onChangeText={setModelSearch}
+                style={{
+                  flex: 1,
+                  minHeight: 44,
+                  borderWidth: 0,
+                  backgroundColor: 'transparent',
+                  paddingHorizontal: 0,
+                }}
+              />
+
+              {normalizedModelSearch.length > 0 ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onPress={() => {
+                    setModelSearch('');
+                    setSearchInputResetKey((current) => current + 1);
                   }}
-                />
-
-                {modelSearch.length > 0 ? (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onPress={() => setModelSearch('')}
-                    className="size-8 rounded-full"
-                    style={{ width: 32, height: 32 }}>
-                    <Icon as={X} className="text-muted-foreground size-4" />
-                  </Button>
-                ) : null}
-              </View>
-
-              <Button
-                variant="outline"
-                size="icon"
-                onPress={() => void refreshModels()}
-                className="rounded-xl"
-                style={{ width: 44, height: 44 }}>
-                <Icon as={RotateCwIcon} className="text-foreground size-4" />
-              </Button>
+                  className="size-8 rounded-full"
+                  style={{ width: 32, height: 32 }}>
+                  <Icon as={X} className="text-muted-foreground size-4" />
+                </Button>
+              ) : null}
             </View>
+
+            <Button
+              variant="outline"
+              size="icon"
+              onPress={() => void refreshModels()}
+              className="rounded-xl"
+              style={{ width: 44, height: 44 }}>
+              <Icon as={RotateCwIcon} className="text-foreground size-4" />
+            </Button>
           </View>
-        }
-        ListEmptyComponent={
-          isLoadingModels ? (
-            <View className="px-5 py-3">
-              <Text className="text-muted-foreground text-sm">
-                Loading models from your provider...
-              </Text>
-            </View>
-          ) : modelLoadError ? (
-            <View className="px-5 py-3">
-              <Text className="text-muted-foreground text-sm">{modelLoadError}</Text>
-            </View>
-          ) : (
-            <View className="px-5 py-3">
-              <Text className="text-muted-foreground text-sm">No models match your search.</Text>
-            </View>
-          )
-        }
-        renderItem={({ item }) => (
-          <Pressable
-            className="active:bg-accent border-border flex-row items-center justify-between px-5 py-4"
-            style={{ borderBottomWidth: item.type === 'model' && item.isLast ? 0 : 1 }}
-            onPress={() => {
-              onSelect(item.value);
-              onOpenChange(false);
-            }}>
-            <Text className={item.type === 'typed' ? 'text-sm font-medium' : 'text-sm'}>
-              {item.label}
-            </Text>
-            {item.value === value ? <Icon as={Check} className="text-foreground size-4" /> : null}
-          </Pressable>
-        )}
-      />
+        </View>
+
+        <BottomSheetFlatList
+          data={modelRows}
+          keyExtractor={(item) => item.key}
+          keyboardShouldPersistTaps="always"
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, paddingTop: 4, gap: 2 }}
+          initialNumToRender={20}
+          maxToRenderPerBatch={20}
+          windowSize={8}
+          ListEmptyComponent={
+            isLoadingModels ? (
+              <View className="px-5 py-3">
+                <Text className="text-muted-foreground text-sm">
+                  Loading models from your provider...
+                </Text>
+              </View>
+            ) : modelLoadError ? (
+              <View className="px-5 py-3">
+                <Text className="text-muted-foreground text-sm">{modelLoadError}</Text>
+              </View>
+            ) : (
+              <View className="px-5 py-3">
+                <Text className="text-muted-foreground text-sm">No models match your search.</Text>
+              </View>
+            )
+          }
+          renderItem={renderModelRow}
+        />
+      </View>
     </BottomSheet>
   );
 }

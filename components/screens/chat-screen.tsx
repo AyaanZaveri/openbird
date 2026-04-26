@@ -35,7 +35,6 @@ import { fetch as expoFetch } from 'expo/fetch';
 import * as Haptics from 'expo-haptics';
 import {
   ExpoSpeechRecognitionModule,
-  type ExpoSpeechRecognitionPermissionResponse,
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import {
@@ -64,6 +63,10 @@ import { withUniwind } from 'uniwind';
 import { z } from 'zod';
 
 const StyledSafeAreaView = withUniwind(SafeAreaView);
+
+type SpeechRecognitionPermissionStatus = Awaited<
+  ReturnType<typeof ExpoSpeechRecognitionModule.getPermissionsAsync>
+>;
 
 const updateMemoryInputSchema = z.object({
   memory: z
@@ -250,7 +253,7 @@ export function ChatScreen() {
   const [memoryPrompt, setMemoryPrompt] = React.useState('');
   const memoryPromptRef = React.useRef('');
   const [isListening, setIsListening] = React.useState(false);
-  const [micPermission, setMicPermission] = React.useState<ExpoSpeechRecognitionPermissionResponse | null>(null);
+  const [micPermission, setMicPermission] = React.useState<SpeechRecognitionPermissionStatus | null>(null);
 
   useSpeechRecognitionEvent('result', (event) => {
     if (event.results && event.results.length > 0) {

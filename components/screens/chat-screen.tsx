@@ -34,6 +34,11 @@ import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { fetch as expoFetch } from 'expo/fetch';
 import * as Haptics from 'expo-haptics';
 import {
+  ExpoSpeechRecognitionModule,
+  type ExpoSpeechRecognitionPermissionResponse,
+  useSpeechRecognitionEvent,
+} from 'expo-speech-recognition';
+import {
   Bird,
   Brain,
   Check,
@@ -44,6 +49,7 @@ import {
   ImagePlus,
   Menu,
   MessageCirclePlus,
+  Mic,
   RotateCw,
   SendHorizontal,
   Timer,
@@ -243,6 +249,35 @@ export function ChatScreen() {
   const [webSearchEnabled, setWebSearchEnabled] = React.useState(false);
   const [memoryPrompt, setMemoryPrompt] = React.useState('');
   const memoryPromptRef = React.useRef('');
+  const [isListening, setIsListening] = React.useState(false);
+  const [micPermission, setMicPermission] = React.useState<ExpoSpeechRecognitionPermissionResponse | null>(null);
+
+  useSpeechRecognitionEvent('result', (event) => {
+    if (event.results && event.results.length > 0) {
+      const transcript = event.results[0]?.transcript ?? '';
+      if (transcript) {
+        setDraft((prev) => {
+          const separator = prev.length > 0 && !prev.endsWith(' ') ? ' ' : '';
+          return prev + separator + transcript;
+        });
+      }
+    }
+  });
+
+  useSpeechRecognitionEvent('error', (event) => {
+    setIsListening(false);
+    Alert.alert('Speech error', event.message || 'Speech recognition failed.');
+  });
+
+  useSpeechRecognitionEvent('end', () => {
+    setIsListening(false);
+  });
+
+  React.useEffect(() => {
+    void ExpoSpeechRecognitionModule.getPermissionsAsync().then((status) => {
+      setMicPermission(status);
+    });
+  }, []);
 
   React.useEffect(() => {
     memoryPromptRef.current = memoryPrompt;
@@ -280,6 +315,39 @@ export function ChatScreen() {
       };
     }, [])
   );
+
+  async function ensureSpeechPermissions() {
+    if (micPermission?.status === 'granted') {
+      return true;
+    }
+
+    const response = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    setMicPermission(response);
+    return response.status === 'granted';
+  }
+
+  async function startListening() {
+    if (isListening || isSending) return;
+    const granted = await ensureSpeechPermissions();
+    if (!granted) {
+      Alert.alert('Permission needed', 'Microphone access is required for voice input.');
+      return;
+    }
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsListening(true);
+    ExpoSpeechRecognitionModule.start({
+      lang: 'en-US',
+      interimResults: true,
+      continuous: true,
+      maxAlternatives: 1,
+    });
+  }
+
+  async function stopListening() {
+    if (!isListening) return;
+    void Haptics.selectionAsync();
+    ExpoSpeechRecognitionModule.stop();
+  }
 
   async function streamAssistantResponse(
     nextMessages: Message[],
@@ -1090,14 +1158,39 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                       </Button>
                     </View>
 
-                    <Button
-                      size="icon"
-                      className="size-9 rounded-full"
-                      disabled={isSending}
-                      onPress={() => void sendMessage()}
-                      accessibilityLabel="Send message">
-                      <Icon as={SendHorizontal} className="text-primary-foreground size-4.5" />
-                    </Button>
+                    <View className="flex-row items-center gap-2">
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className={
+                          isListening
+                            ? 'size-9 rounded-full bg-amber-500'
+                            : 'size-9 rounded-full bg-amber-500/10 active:bg-amber-500/20'
+                        }
+                        disabled={isSending}
+                        onPressIn={() => void startListening()}
+                        onPressOut={() => void stopListening()}
+                        accessibilityLabel="Hold to speak"
+                        accessibilityRole="button"
+                        accessibilityHint="Hold to record voice input">
+                        <Icon
+                          as={Mic}
+                          className={
+                            isListening
+                              ? 'text-white size-4.5'
+                              : 'text-amber-600 size-4.5 dark:text-amber-400'
+                          }
+                        />
+                      </Button>
+                      <Button
+                        size="icon"
+                        className="size-9 rounded-full"
+                        disabled={isSending}
+                        onPress={() => void sendMessage()}
+                        accessibilityLabel="Send message">
+                        <Icon as={SendHorizontal} className="text-primary-foreground size-4.5" />
+                      </Button>
+                    </View>
                   </View>
                 </View>
               </View>

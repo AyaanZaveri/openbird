@@ -12,6 +12,7 @@ export type SettingsForm = {
 export type ModelOption = {
   label: string;
   value: string;
+  created?: number;
 };
 
 type CachedModelsEntry = {
@@ -26,6 +27,7 @@ type DiscoveredModelsResponse = {
   models: Array<{
     id: string;
     name?: string;
+    created?: number;
   }>;
 };
 
@@ -96,7 +98,7 @@ export async function loadAvailableModels(form: SettingsForm) {
     });
 
     const providerWithDiscovery = provider as typeof provider & {
-      getAvailableModels?: () => Promise<{ models?: Array<{ id: string; name?: string }> }>;
+      getAvailableModels?: () => Promise<{ models?: Array<{ id: string; name?: string; created?: number }> }>;
     };
 
     const discovered =
@@ -114,11 +116,12 @@ export async function loadAvailableModels(form: SettingsForm) {
       uniqueModels.set(model.id, {
         value: model.id,
         label: model.name?.trim() || model.id,
+        created: model.created,
       });
     }
 
     const models = Array.from(uniqueModels.values()).sort((left, right) =>
-      left.label.localeCompare(right.label)
+      (right.created ?? 0) - (left.created ?? 0)
     );
 
     const result = {
@@ -207,8 +210,8 @@ async function fetchOpenAICompatibleModels(
   }
 
   const json = (await response.json()) as
-    | { data?: Array<{ id?: string; name?: string }> }
-    | { models?: Array<{ id?: string; name?: string }> };
+    | { data?: Array<{ id?: string; name?: string; created?: number }> }
+    | { models?: Array<{ id?: string; name?: string; created?: number }> };
 
   const models = 'models' in json ? json.models : 'data' in json ? json.data : undefined;
 
@@ -216,9 +219,9 @@ async function fetchOpenAICompatibleModels(
     models: (models ?? [])
       .filter(
         (
-          model: { id?: string; name?: string } | undefined
-        ): model is { id: string; name?: string } => typeof model?.id === 'string'
+          model: { id?: string; name?: string; created?: number } | undefined
+        ): model is { id: string; name?: string; created?: number } => typeof model?.id === 'string'
       )
-      .map((model: { id: string; name?: string }) => ({ id: model.id, name: model.name })),
+      .map((model: { id: string; name?: string; created?: number }) => ({ id: model.id, name: model.name, created: model.created })),
   };
 }

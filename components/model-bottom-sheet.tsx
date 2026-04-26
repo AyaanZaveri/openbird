@@ -101,7 +101,7 @@ export function ModelBottomSheet({
           return left.score - right.score;
         }
 
-        return left.model.label.localeCompare(right.model.label);
+        return (right.model.created ?? 0) - (left.model.created ?? 0);
       })
       .map((entry) => entry.model);
   }, [modelOptions, normalizedModelSearch]);
@@ -165,12 +165,12 @@ export function ModelBottomSheet({
       ref={bottomSheetRef}
       onDismiss={() => onOpenChange(false)}
       enableDynamicSizing={false}
-      enablePanDownToClose={false}
+      enablePanDownToClose
       keyboardBehavior={Platform.OS === 'android' ? 'fillParent' : 'interactive'}
       android_keyboardInputMode="adjustResize"
       snapPoints={modelSheetSnapPoints}>
       <View className="flex-1">
-        <View className="bg-card border-x border-border px-5 pt-1 pb-3">
+        <View className="bg-card border-x border-border px-5 pt-1 pb-2">
           <BottomSheetHeader>
             <BottomSheetTitle>Choose Model</BottomSheetTitle>
             <BottomSheetDescription>
@@ -226,7 +226,7 @@ export function ModelBottomSheet({
           data={modelRows}
           keyExtractor={(item) => item.key}
           keyboardShouldPersistTaps="always"
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, paddingTop: 4, gap: 2 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, gap: 2 }}
           initialNumToRender={20}
           maxToRenderPerBatch={20}
           windowSize={8}

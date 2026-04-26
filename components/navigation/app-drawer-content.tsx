@@ -8,7 +8,7 @@ import {
   type DrawerContentComponentProps,
 } from '@react-navigation/drawer';
 import { router, usePathname } from 'expo-router';
-import { Bird, MessageCirclePlus, MessageSquare, Settings } from 'lucide-react-native';
+import { Origami, MessageCirclePlus, MessageSquare, Settings } from 'lucide-react-native';
 import { InteractionManager, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -26,7 +26,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
         {...props}
         contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: 16 }}>
         <View className="flex-row items-center gap-2 px-4 pb-4">
-          <Icon className="text-primary size-6" as={Bird} />
+          <Icon className="text-primary size-6" as={Origami} />
           <Text className="text-2xl font-semibold tracking-tight">OpenBird</Text>
         </View>
 
@@ -42,8 +42,8 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
             }}
           />
 
-          <View className="mt-4 gap-1 px-1">
-            <Text className="text-muted-foreground px-2 text-xs font-medium tracking-[0.18em] uppercase">
+          <View className="mt-4 gap-1">
+            <Text className="text-muted-foreground px-1 text-xs font-medium tracking-[0.18em] uppercase">
               Chats
             </Text>
 
@@ -103,8 +103,8 @@ function DrawerActionRow({
         active ? 'bg-accent justify-start rounded-xl px-3' : 'justify-start rounded-xl px-3'
       }
       onPress={onPress}>
-      <View className="flex-row items-center gap-3">
-        <Icon as={icon} className="size-5" />
+      <View className="flex-row items-center gap-2.5">
+        <Icon as={icon} className="size-4.5" />
         <Text className="font-medium" numberOfLines={1}>
           {label}
         </Text>

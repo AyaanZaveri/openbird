@@ -27,6 +27,9 @@ type ModelBottomSheetProps = {
   settings: SettingsForm;
   value: string;
   onSelect: (model: string) => void;
+  title?: string;
+  description?: string;
+  searchPlaceholder?: string;
 };
 
 type ModelRow =
@@ -39,6 +42,9 @@ export function ModelBottomSheet({
   settings,
   value,
   onSelect,
+  title = 'Choose Model',
+  description = 'Search your provider models or enter a custom model ID.',
+  searchPlaceholder = 'Search or enter a model ID',
 }: ModelBottomSheetProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -172,10 +178,8 @@ export function ModelBottomSheet({
       <View className="flex-1">
         <View className="bg-card border-x border-border px-5 pt-1 pb-2">
           <BottomSheetHeader>
-            <BottomSheetTitle>Choose Model</BottomSheetTitle>
-            <BottomSheetDescription>
-              Search your provider models or enter a custom model ID.
-            </BottomSheetDescription>
+            <BottomSheetTitle>{title}</BottomSheetTitle>
+            <BottomSheetDescription>{description}</BottomSheetDescription>
           </BottomSheetHeader>
 
           <View className="mt-4 flex-row items-center gap-2">
@@ -185,7 +189,7 @@ export function ModelBottomSheet({
                 autoCapitalize="none"
                 autoCorrect={false}
                 defaultValue={modelSearch}
-                placeholder="Search or enter a model ID"
+                placeholder={searchPlaceholder}
                 onChangeText={setModelSearch}
                 style={{
                   flex: 1,

@@ -13,6 +13,7 @@ import {
   useFonts,
 } from '@expo-google-fonts/geist';
 import { GeistMono_400Regular } from '@expo-google-fonts/geist-mono';
+import { InstrumentSerif_400Regular } from '@expo-google-fonts/instrument-serif';
 import { ThemeProvider } from '@react-navigation/native';
 import { PortalHost } from '@rn-primitives/portal';
 import { SplashScreen, Stack } from 'expo-router';
@@ -41,6 +42,7 @@ export default function RootLayout() {
     Geist_700Bold,
     Geist_800ExtraBold,
     GeistMono_400Regular,
+    InstrumentSerif_400Regular,
   });
 
   React.useEffect(() => {

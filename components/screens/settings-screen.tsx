@@ -56,6 +56,7 @@ export function SettingsScreen() {
   const [hasLoadedInitialState, setHasLoadedInitialState] = React.useState(false);
   const [isThemeSheetOpen, setIsThemeSheetOpen] = React.useState(false);
   const [isModelSheetOpen, setIsModelSheetOpen] = React.useState(false);
+  const [isSpeechEnrichmentModelSheetOpen, setIsSpeechEnrichmentModelSheetOpen] = React.useState(false);
   const themeBottomSheetRef = React.useRef<any>(null);
 
   React.useEffect(() => {
@@ -123,9 +124,18 @@ export function SettingsScreen() {
     setIsModelSheetOpen(true);
   }
 
+  function openSpeechEnrichmentModelSheet() {
+    setIsSpeechEnrichmentModelSheetOpen(true);
+  }
+
   function selectModel(modelValue: string) {
     setSettingsError(null);
     setSettings((current) => ({ ...current, model: modelValue }));
+  }
+
+  function selectSpeechEnrichmentModel(modelValue: string) {
+    setSettingsError(null);
+    setSettings((current) => ({ ...current, speechEnrichmentModel: modelValue }));
   }
 
   return (
@@ -244,6 +254,30 @@ export function SettingsScreen() {
                 </View>
               </View>
 
+              <View className="gap-2">
+                <Text className="text-sm font-medium">Speech Enrichment Model</Text>
+                <Text className="text-muted-foreground text-xs">
+                  Used only to clean up dictation punctuation, spelling, and formatting after recording.
+                </Text>
+                <View className="flex flex-row items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="min-w-0 flex-1 justify-between"
+                    onPress={openSpeechEnrichmentModelSheet}>
+                    <Text
+                      className={
+                        settings.speechEnrichmentModel
+                          ? 'shrink pr-2 font-normal'
+                          : 'text-muted-foreground shrink pr-2'
+                      }
+                      numberOfLines={1}>
+                      {settings.speechEnrichmentModel || 'Choose a speech enrichment model'}
+                    </Text>
+                    <Icon as={ChevronRight} className="text-muted-foreground size-4" />
+                  </Button>
+                </View>
+              </View>
+
               <View className="mt-2 gap-1">
                 <View className="flex-row items-center gap-2">
                   <Icon as={Database} className="text-foreground size-5" />
@@ -336,9 +370,22 @@ export function SettingsScreen() {
       <ModelBottomSheet
         open={isModelSheetOpen}
         onOpenChange={setIsModelSheetOpen}
+        title="Choose Chat Model"
+        description="Select the default model used for your main chat responses."
         settings={settings}
         value={settings.model}
         onSelect={selectModel}
+      />
+
+      <ModelBottomSheet
+        open={isSpeechEnrichmentModelSheetOpen}
+        onOpenChange={setIsSpeechEnrichmentModelSheetOpen}
+        title="Choose Speech Enrichment Model"
+        description="Select the model used to post-process speech into clean, punctuated text."
+        searchPlaceholder="Search or enter a speech model ID"
+        settings={settings}
+        value={settings.speechEnrichmentModel}
+        onSelect={selectSpeechEnrichmentModel}
       />
     </>
   );

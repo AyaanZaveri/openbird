@@ -27,7 +27,7 @@ import {
 import { searchSearxng } from '@/lib/searxng';
 import { loadUserMemory, normalizeMemoryPrompt, saveUserMemory } from '@/lib/user-memory';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateText, stepCountIs, streamText, tool } from 'ai';
+import { generateText, Output, stepCountIs, streamText, tool } from 'ai';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
@@ -44,19 +44,21 @@ import {
   ChevronDown,
   Copy,
   Globe,
-  SearchCheckIcon,
   ImagePlus,
+  Loader2,
   Menu,
   MessageCirclePlus,
+  Origami,
   Mic,
   RotateCw,
+  SearchCheckIcon,
   SendHorizontal,
   Timer,
   TriangleAlert,
   X
 } from 'lucide-react-native';
 import * as React from 'react';
-import { Alert, Image, Platform, Pressable, ScrollView, View } from 'react-native';
+import { Alert, Animated, Image, Platform, Pressable, ScrollView, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { withUniwind } from 'uniwind';
@@ -106,6 +108,10 @@ const webSearchOutputSchema = z.array(
     date: z.string().optional(),
   })
 );
+
+const speechEnrichmentOutputSchema = z.object({
+  correctedText: z.string().trim().min(1),
+});
 
 function getWebSearchContext() {
   const fallbackDate = new Date();
@@ -183,6 +189,94 @@ function buildChatSystemPrompt(memoryPrompt: string, webSearchEnabled: boolean) 
   return sections.join('\n\n');
 }
 
+function buildPostProcessSystemPrompt(memoryPrompt: string) {
+  const sections = [
+    'You are a precise speech-to-text post-processor. You take raw voice transcript and return clean, corrected text.',
+    'Rules - follow them in order:',
+    '1. Fix grammar, spelling, and punctuation (capitalize sentences, add periods, commas).',
+    '2. Never change the meaning of what the user said.',
+    '3. Keep informal contractions and phrasing intact (this is spoken text).',
+    '4. Insert ONLY the corrected text — no preamble, no quotes, no markdown wrappers.',
+    '5. Preserve filler words like "um" or "uh" only if they are intentional pauses; otherwise remove them.',
+    '6. If the transcript is a question, ensure it ends with a question mark.',
+    '7. Fix obvious homophone errors (e.g., "there" vs "they\'re").',
+    '8. Add paragraph breaks only when there is a clear topic shift.',
+    '9. Do not invent, stretch, repeat, or embellish words. Never turn a valid word into a playful or elongated spelling.',
+    '10. Preserve proper nouns and capitalize them correctly when obvious from context.',
+  ];
+
+  if (memoryPrompt.trim()) {
+    sections.push(
+      `Personal memory / user context:\n${memoryPrompt.trim()}\n\nUse this context to spell names, places, and specific references correctly.`
+    );
+  }
+
+  return sections.join('\n\n');
+}
+
+function wordCountToTokens(text: string): number {
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  // ~1.3 tokens/word for English; add generous headroom for formatting changes
+  return Math.min(Math.max(Math.ceil(wordCount * 2.5), 60), 1024);
+}
+
+function getMaxRepeatedCharacterRun(text: string): number {
+  let maxRun = 0;
+  let currentRun = 0;
+  let previousChar = '';
+
+  for (const char of text) {
+    if (char.toLowerCase() === previousChar.toLowerCase()) {
+      currentRun += 1;
+    } else {
+      previousChar = char;
+      currentRun = 1;
+    }
+
+    maxRun = Math.max(maxRun, currentRun);
+  }
+
+  return maxRun;
+}
+
+function looksLikeQuestion(text: string): boolean {
+  return /^(who|what|when|where|why|how|is|are|am|do|does|did|can|could|would|should|will|have|has)\b/i.test(
+    text.trim()
+  );
+}
+
+function applyBasicTextCleanup(text: string): string {
+  const trimmed = text.replace(/\s+/g, ' ').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const sentenceCased = trimmed.replace(/^([a-z])/, (match) => match.toUpperCase());
+  if (/[.!?]$/.test(sentenceCased)) {
+    return sentenceCased;
+  }
+
+  return sentenceCased + (looksLikeQuestion(sentenceCased) ? '?' : '.');
+}
+
+function isSpeechEnrichmentAcceptable(rawInput: string, correctedText: string): boolean {
+  if (!correctedText.trim()) {
+    return false;
+  }
+
+  if (correctedText.length > rawInput.length * 1.75) {
+    return false;
+  }
+
+  const rawMaxRun = getMaxRepeatedCharacterRun(rawInput);
+  const correctedMaxRun = getMaxRepeatedCharacterRun(correctedText);
+  if (correctedMaxRun > Math.max(rawMaxRun, 2)) {
+    return false;
+  }
+
+  return true;
+}
+
 function getToolCallId(part: { toolCallId?: string; id?: string }) {
   return part.toolCallId ?? part.id ?? `tool-${Date.now()}`;
 }
@@ -252,28 +346,106 @@ export function ChatScreen() {
   const [webSearchEnabled, setWebSearchEnabled] = React.useState(false);
   const [memoryPrompt, setMemoryPrompt] = React.useState('');
   const memoryPromptRef = React.useRef('');
+  const draftRef = React.useRef('');
+  const settingsRef = React.useRef<SettingsForm>(defaultSettings);
   const [isListening, setIsListening] = React.useState(false);
   const [micPermission, setMicPermission] = React.useState<SpeechRecognitionPermissionStatus | null>(null);
+  const [isPostProcessing, setIsPostProcessing] = React.useState(false);
+  const finalizedSpeechRef = React.useRef('');
+  const interimSpeechRef = React.useRef('');
+  const isPostProcessingRef = React.useRef(false);
+  const shouldPostProcessSpeechRef = React.useRef(false);
+  const speechSessionActiveRef = React.useRef(false);
+
+  const rotateAnim = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    if (!isPostProcessing) {
+      rotateAnim.setValue(0);
+      return;
+    }
+
+    const spin = Animated.loop(
+      Animated.timing(rotateAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      })
+    );
+
+    spin.start();
+    return () => spin.stop();
+  }, [isPostProcessing, rotateAnim]);
+
+  React.useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  React.useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  React.useEffect(() => {
+    isPostProcessingRef.current = isPostProcessing;
+  }, [isPostProcessing]);
+
+  const syncDraftWithSpeechRefs = React.useCallback(() => {
+    const currentInterim = interimSpeechRef.current;
+    if (currentInterim) {
+      const sep = finalizedSpeechRef.current.length > 0 ? ' ' : '';
+      setDraft(finalizedSpeechRef.current + sep + currentInterim);
+      return;
+    }
+
+    setDraft(finalizedSpeechRef.current);
+  }, []);
 
   useSpeechRecognitionEvent('result', (event) => {
+    if (!speechSessionActiveRef.current) {
+      return;
+    }
+
     if (event.results && event.results.length > 0) {
-      const transcript = event.results[0]?.transcript ?? '';
-      if (transcript) {
-        setDraft((prev) => {
-          const separator = prev.length > 0 && !prev.endsWith(' ') ? ' ' : '';
-          return prev + separator + transcript;
-        });
+      const result = event.results[0];
+      const transcript = result?.transcript ?? '';
+      if (!transcript) return;
+
+      if (event.isFinal) {
+        const separator = finalizedSpeechRef.current.length > 0 && !finalizedSpeechRef.current.endsWith(' ') ? ' ' : '';
+        finalizedSpeechRef.current += separator + transcript;
+        interimSpeechRef.current = '';
+      } else {
+        interimSpeechRef.current = transcript;
       }
+      syncDraftWithSpeechRefs();
     }
   });
 
   useSpeechRecognitionEvent('error', (event) => {
+    speechSessionActiveRef.current = false;
+    shouldPostProcessSpeechRef.current = false;
     setIsListening(false);
+    interimSpeechRef.current = '';
     Alert.alert('Speech error', event.message || 'Speech recognition failed.');
   });
 
   useSpeechRecognitionEvent('end', () => {
+    speechSessionActiveRef.current = false;
     setIsListening(false);
+    if (interimSpeechRef.current) {
+      const separator = finalizedSpeechRef.current.length > 0 && !finalizedSpeechRef.current.endsWith(' ') ? ' ' : '';
+      finalizedSpeechRef.current += separator + interimSpeechRef.current;
+      interimSpeechRef.current = '';
+      syncDraftWithSpeechRefs();
+    }
+
+    if (!shouldPostProcessSpeechRef.current) {
+      return;
+    }
+
+    shouldPostProcessSpeechRef.current = false;
+    const capturedSpeech = finalizedSpeechRef.current.trim();
+    void postProcessSpeech(capturedSpeech);
   });
 
   React.useEffect(() => {
@@ -337,6 +509,10 @@ export function ChatScreen() {
       return;
     }
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    shouldPostProcessSpeechRef.current = false;
+    speechSessionActiveRef.current = true;
+    finalizedSpeechRef.current = draftRef.current;
+    interimSpeechRef.current = '';
     setIsListening(true);
     ExpoSpeechRecognitionModule.start({
       lang: 'en-US',
@@ -349,7 +525,100 @@ export function ChatScreen() {
   async function stopListening() {
     if (!isListening) return;
     void Haptics.selectionAsync();
+    shouldPostProcessSpeechRef.current = true;
     ExpoSpeechRecognitionModule.stop();
+  }
+
+  async function postProcessSpeech(rawInput: string) {
+    if (isPostProcessingRef.current) return;
+
+    if (!rawInput) return;
+
+    const parsedSettings = settingsSchema.safeParse(settingsRef.current);
+    if (!parsedSettings.success) return;
+
+    isPostProcessingRef.current = true;
+    setIsPostProcessing(true);
+
+    try {
+      const provider = createOpenAICompatible({
+        name: 'custom-provider',
+        apiKey: parsedSettings.data.apiKey,
+        baseURL: parsedSettings.data.baseUrl,
+        fetch: expoFetch as unknown as typeof globalThis.fetch,
+      });
+
+      const runEnrichment = async (prompt: string) => {
+        const result = await generateText({
+          model: provider(parsedSettings.data.speechEnrichmentModel),
+          system: buildPostProcessSystemPrompt(memoryPromptRef.current),
+          maxOutputTokens: wordCountToTokens(rawInput),
+          temperature: 0,
+          maxRetries: 2,
+          output: Output.object({
+            schema: speechEnrichmentOutputSchema,
+          }),
+          prompt,
+        });
+
+        return result.output.correctedText.trim();
+      };
+
+      let corrected = await runEnrichment(
+        [
+          'Return only corrected text in the schema field.',
+          'Fix punctuation, grammar, and spelling while preserving meaning.',
+          `Raw transcript: ${rawInput}`,
+        ].join('\n\n')
+      );
+
+      if (!isSpeechEnrichmentAcceptable(rawInput, corrected)) {
+        corrected = await runEnrichment(
+          [
+            'This is a strict normalization task.',
+            'Do not rewrite tone or wording unless needed for spelling, capitalization, punctuation, or obvious grammar correction.',
+            'Example input: what is the capital of france',
+            'Example output: What is the capital of France?',
+            `Now correct this transcript: ${rawInput}`,
+          ].join('\n\n')
+        );
+      }
+
+      const finalText = isSpeechEnrichmentAcceptable(rawInput, corrected)
+        ? corrected
+        : applyBasicTextCleanup(rawInput);
+
+      if (finalText) {
+        setDraft(finalText);
+        finalizedSpeechRef.current = finalText;
+        draftRef.current = finalText;
+      }
+    } catch {
+      const fallback = applyBasicTextCleanup(rawInput);
+      if (fallback) {
+        setDraft(fallback);
+        finalizedSpeechRef.current = fallback;
+        draftRef.current = fallback;
+      }
+    } finally {
+      isPostProcessingRef.current = false;
+      setIsPostProcessing(false);
+    }
+  }
+
+  async function enrichDraft() {
+    if (isListening || isSending || isPostProcessingRef.current) {
+      return;
+    }
+
+    const currentDraft = draftRef.current.trim();
+    if (!currentDraft) {
+      return;
+    }
+
+    finalizedSpeechRef.current = currentDraft;
+    interimSpeechRef.current = '';
+    await postProcessSpeech(currentDraft);
   }
 
   async function streamAssistantResponse(
@@ -1008,6 +1277,27 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
     return null;
   }, [messages]);
 
+  const welcomeMessages = React.useMemo(
+    () => [
+      "What are we doing today?",
+      "I'm ready when you are.",
+      "What's on your mind today?",
+      "What are we cooking today?",
+      "Talk to me.",
+    ],
+    []
+  );
+
+  const [welcomeIndex, setWelcomeIndex] = React.useState(() =>
+    Math.floor(Math.random() * welcomeMessages.length)
+  );
+
+  React.useEffect(() => {
+    if (messages.length === 0) {
+      setWelcomeIndex(Math.floor(Math.random() * welcomeMessages.length));
+    }
+  }, [messages.length, welcomeMessages.length]);
+
   return (
     <StyledSafeAreaView className="bg-background flex-1 px-4">
       <KeyboardAvoidingView behavior="padding" className="flex-1">
@@ -1023,7 +1313,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
 
             <View className="flex-1">
               <View className="flex flex-row items-center gap-2">
-                <Icon as={Bird} className="text-primary size-5" />
+                {/* <Icon as={Origami} className="text-primary size-5" /> */}
                 <Text className="text-lg font-semibold tracking-tight">OpenBird</Text>
               </View>
               <Pressable
@@ -1054,9 +1344,12 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
 
           <View className="flex-1">
             {messages.length === 0 ? (
-              <View className="flex-1 items-center justify-center px-6 pb-24">
-                <Text className="text-center text-3xl font-semibold tracking-tight">
-                  What's on your mind?
+              <View className="flex-1 items-center justify-center px-6 pb-24 gap-5 mt-[-60px]">
+                <Icon as={Origami} className="text-primary size-11" />
+                <Text
+                  className="text-center text-[2.35rem] tracking-tight max-w-64 text-white"
+                  style={{ fontFamily: 'InstrumentSerif_400Regular' }}>
+                  {welcomeMessages[welcomeIndex]}
                 </Text>
               </View>
             ) : (
@@ -1162,29 +1455,68 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                     </View>
 
                     <View className="flex-row items-center gap-2">
-                      <Button
-                        size="icon"
-                        variant="secondary"
-                        className={
-                          isListening
-                            ? 'size-9 rounded-full bg-amber-500'
-                            : 'size-9 rounded-full bg-amber-500/10 active:bg-amber-500/20'
-                        }
-                        disabled={isSending}
-                        onPressIn={() => void startListening()}
-                        onPressOut={() => void stopListening()}
-                        accessibilityLabel="Hold to speak"
-                        accessibilityRole="button"
-                        accessibilityHint="Hold to record voice input">
-                        <Icon
-                          as={Mic}
-                          className={
-                            isListening
-                              ? 'text-white size-4.5'
-                              : 'text-amber-600 size-4.5 dark:text-amber-400'
-                          }
-                        />
-                      </Button>
+                      {isPostProcessing ? (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-9 rounded-full"
+                          disabled>
+                          <Animated.View
+                            style={{
+                              transform: [{
+                                rotate: rotateAnim.interpolate({
+                                  inputRange: [0, 1],
+                                  outputRange: ['0deg', '360deg'],
+                                }),
+                              }],
+                            }}>
+                            <Icon
+                              as={Loader2}
+                              className="text-foreground size-4.5"
+                            />
+                          </Animated.View>
+                        </Button>
+                      ) : (
+                        <>
+                          <Button
+                            size="icon"
+                            variant="secondary"
+                            className="size-9 rounded-full bg-cyan-500/10 active:bg-cyan-500/20"
+                            disabled={isSending || isListening || !draft.trim()}
+                            onPress={() => {
+                              void enrichDraft();
+                            }}
+                            accessibilityLabel="Enrich text"
+                            accessibilityRole="button"
+                            accessibilityHint="Fix punctuation, grammar, and spelling using the speech enrichment model">
+                            <Icon as={Brain} className="text-cyan-600 size-4.5 dark:text-cyan-400" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="secondary"
+                            className={
+                              isListening
+                                ? 'size-9 rounded-full bg-amber-500'
+                                : 'size-9 rounded-full bg-amber-500/10 active:bg-amber-500/20'
+                            }
+                            disabled={isSending}
+                            onPress={() => {
+                              void (isListening ? stopListening() : startListening());
+                            }}
+                            accessibilityLabel={isListening ? 'Stop listening' : 'Start dictation'}
+                            accessibilityRole="button"
+                            accessibilityHint="Toggle voice dictation">
+                            <Icon
+                              as={Mic}
+                              className={
+                                isListening
+                                  ? 'text-white size-4.5'
+                                  : 'text-amber-600 size-4.5 dark:text-amber-400'
+                              }
+                            />
+                          </Button>
+                        </>
+                      )}
                       <Button
                         size="icon"
                         className="size-9 rounded-full"

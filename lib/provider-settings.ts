@@ -7,6 +7,7 @@ export type SettingsForm = {
   apiKey: string;
   baseUrl: string;
   model: string;
+  speechEnrichmentModel: string;
 };
 
 export type ModelOption = {
@@ -46,12 +47,14 @@ export const settingsSchema = z.object({
       return protocol === 'http:' || protocol === 'https:';
     }, 'Use an http or https URL.'),
   model: z.string().trim().min(1, 'Enter a model ID.'),
+  speechEnrichmentModel: z.string().trim().min(1, 'Enter a speech enrichment model ID.'),
 });
 
 export const defaultSettings: SettingsForm = {
   apiKey: '',
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
+  speechEnrichmentModel: 'gpt-4o-mini',
 };
 
 export async function loadProviderSettings() {
@@ -61,7 +64,13 @@ export async function loadProviderSettings() {
       return defaultSettings;
     }
 
-    const parsedValue = settingsSchema.safeParse(JSON.parse(storedValue));
+    const parsedJson = JSON.parse(storedValue) as Partial<SettingsForm>;
+    const parsedValue = settingsSchema.safeParse({
+      ...defaultSettings,
+      ...parsedJson,
+      speechEnrichmentModel:
+        parsedJson.speechEnrichmentModel?.trim() || parsedJson.model?.trim() || defaultSettings.speechEnrichmentModel,
+    });
     if (!parsedValue.success) {
       return defaultSettings;
     }

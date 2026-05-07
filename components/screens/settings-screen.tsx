@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Text } from '@/components/ui/text';
 import {
+  DEFAULT_SEARXNG_BASE_URL,
+  SEARXNG_INSTANCE_OPTIONS,
   defaultSettings,
   loadProviderSettings,
   saveProviderSettings,
@@ -32,6 +34,7 @@ import {
   ChevronRight,
   Eclipse,
   Database,
+  Globe,
   Moon,
   Sun,
   SunMoon,
@@ -276,6 +279,61 @@ export function SettingsScreen() {
                     <Icon as={ChevronRight} className="text-muted-foreground size-4" />
                   </Button>
                 </View>
+              </View>
+
+              <View className="mt-2 gap-1">
+                <View className="flex-row items-center gap-2">
+                  <Icon as={Globe} className="text-foreground size-5" />
+                  <Text className="text-lg font-medium">Search</Text>
+                </View>
+                <Text className="text-muted-foreground text-sm">
+                  Pick which SearXNG instance powers web search.
+                </Text>
+              </View>
+
+              <View className="gap-2">
+                <Text className="text-sm font-medium">SearXNG Instance</Text>
+                <View className="gap-2">
+                  {SEARXNG_INSTANCE_OPTIONS.map((option) => (
+                    <Button
+                      key={option.value}
+                      variant={settings.searxngBaseUrl === option.value ? 'default' : 'outline'}
+                      className="w-full justify-between"
+                      onPress={() => {
+                        if (settings.searxngBaseUrl === option.value) {
+                          return;
+                        }
+
+                        setSettingsError(null);
+                        setSettings((current) => ({ ...current, searxngBaseUrl: option.value }));
+                        void Haptics.selectionAsync();
+                      }}>
+                      <Text>{option.label}</Text>
+                      <Text className="text-xs opacity-70">{option.value}</Text>
+                    </Button>
+                  ))}
+                  {SEARXNG_INSTANCE_OPTIONS.every((option) => option.value !== settings.searxngBaseUrl) ? (
+                    <View className="border-border bg-muted/30 rounded-xl border px-3 py-2">
+                      <Text className="text-sm font-medium">Custom</Text>
+                      <Text className="text-muted-foreground text-xs">{settings.searxngBaseUrl}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+
+              <View className="gap-2">
+                <Text className="text-sm font-medium">Instance URL</Text>
+                <Input
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  placeholder={DEFAULT_SEARXNG_BASE_URL}
+                  value={settings.searxngBaseUrl}
+                  onChangeText={(value) => {
+                    setSettingsError(null);
+                    setSettings((current) => ({ ...current, searxngBaseUrl: value }));
+                  }}
+                />
               </View>
 
               <View className="mt-2 gap-1">

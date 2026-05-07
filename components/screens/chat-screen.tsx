@@ -529,6 +529,13 @@ export function ChatScreen() {
     ExpoSpeechRecognitionModule.stop();
   }
 
+  function resetSpeechDraftState() {
+    finalizedSpeechRef.current = '';
+    interimSpeechRef.current = '';
+    shouldPostProcessSpeechRef.current = false;
+    draftRef.current = '';
+  }
+
   async function postProcessSpeech(rawInput: string) {
     if (isPostProcessingRef.current) return;
 
@@ -736,7 +743,11 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                   execute: async ({ queries }) => {
                     const settledResults = await Promise.all(
                       queries.map((query) =>
-                        searchSearxng(query, { categories: 'general', language: 'en' })
+                        searchSearxng(query, {
+                          baseUrl: parsedSettings.data.searxngBaseUrl,
+                          categories: 'general',
+                          language: 'en',
+                        })
                       )
                     );
 
@@ -1186,6 +1197,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
     const chatId = setCurrentChatMessages(nextMessages);
     setDraft('');
     setAttachments([]);
+    resetSpeechDraftState();
 
     await streamAssistantResponse(
       nextMessages,

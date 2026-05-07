@@ -1,9 +1,11 @@
-const SEARXNG_BASE_URL = 'https://serxng-deployment-production.up.railway.app';
+import { DEFAULT_SEARXNG_BASE_URL } from '@/lib/provider-settings';
+
 const SEARCH_RESULT_LIMIT = 6;
 const SEARCH_TIMEOUT_MS = 10_000;
 const SNIPPET_MAX_LENGTH = 180;
 
 export type SearxngSearchOptions = {
+  baseUrl?: string;
   categories?: string;
   time_range?: string;
   language?: string;
@@ -58,8 +60,10 @@ export async function searchSearxng(
     searchParams.set('pageno', `${Math.max(1, Math.trunc(options.pageno))}`);
   }
 
+  const normalizedBaseUrl = options.baseUrl?.trim() || DEFAULT_SEARXNG_BASE_URL;
+
   try {
-    const response = await fetch(`${SEARXNG_BASE_URL}/search?${searchParams.toString()}`, {
+    const response = await fetch(`${normalizedBaseUrl.replace(/\/+$/, '')}/search?${searchParams.toString()}`, {
       signal: getTimeoutSignal(),
     });
 

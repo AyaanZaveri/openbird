@@ -8,7 +8,21 @@ export type SettingsForm = {
   baseUrl: string;
   model: string;
   speechEnrichmentModel: string;
+  searxngBaseUrl: string;
 };
+
+export const DEFAULT_SEARXNG_BASE_URL = 'https://cjj-on-hf-searxng.hf.space/';
+
+export const SEARXNG_INSTANCE_OPTIONS = [
+  {
+    label: 'Hugging Face',
+    value: DEFAULT_SEARXNG_BASE_URL,
+  },
+  {
+    label: 'Railway',
+    value: 'https://serxng-deployment-production.up.railway.app',
+  },
+] as const;
 
 export type ModelOption = {
   label: string;
@@ -48,6 +62,14 @@ export const settingsSchema = z.object({
     }, 'Use an http or https URL.'),
   model: z.string().trim().min(1, 'Enter a model ID.'),
   speechEnrichmentModel: z.string().trim().min(1, 'Enter a speech enrichment model ID.'),
+  searxngBaseUrl: z
+    .string()
+    .trim()
+    .url({ message: 'Enter a valid SearXNG URL.' })
+    .refine((value) => {
+      const protocol = new URL(value).protocol;
+      return protocol === 'http:' || protocol === 'https:';
+    }, 'Use an http or https URL for SearXNG.'),
 });
 
 export const defaultSettings: SettingsForm = {
@@ -55,6 +77,7 @@ export const defaultSettings: SettingsForm = {
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
   speechEnrichmentModel: 'gpt-4o-mini',
+  searxngBaseUrl: DEFAULT_SEARXNG_BASE_URL,
 };
 
 export async function loadProviderSettings() {
@@ -70,6 +93,7 @@ export async function loadProviderSettings() {
       ...parsedJson,
       speechEnrichmentModel:
         parsedJson.speechEnrichmentModel?.trim() || parsedJson.model?.trim() || defaultSettings.speechEnrichmentModel,
+      searxngBaseUrl: parsedJson.searxngBaseUrl?.trim() || defaultSettings.searxngBaseUrl,
     });
     if (!parsedValue.success) {
       return defaultSettings;

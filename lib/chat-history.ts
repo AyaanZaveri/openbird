@@ -44,13 +44,22 @@ export type ToolInvocation =
         queries: string[];
       };
       output?: {
-        results: Array<{
+        results: {
           title: string;
           url: string;
           snippet: string;
           date?: string;
-        }>;
+        }[];
       };
+    }
+  | {
+      toolCallId: string;
+      toolName: 'mcp';
+      state: 'input-streaming' | 'input-available' | 'output-available';
+      displayName: string;
+      inputText?: string;
+      input?: unknown;
+      output?: unknown;
     };
 
 export type ChatThread = {
@@ -110,6 +119,15 @@ const toolInvocationSchema = z.discriminatedUnion('toolName', [
         ),
       })
       .optional(),
+  }),
+  z.object({
+    toolCallId: z.string(),
+    toolName: z.literal('mcp'),
+    state: z.enum(['input-streaming', 'input-available', 'output-available']),
+    displayName: z.string(),
+    inputText: z.string().optional(),
+    input: z.unknown().optional(),
+    output: z.unknown().optional(),
   }),
 ]);
 

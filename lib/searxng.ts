@@ -10,6 +10,7 @@ export type SearxngSearchOptions = {
   time_range?: string;
   language?: string;
   pageno?: number;
+  signal?: AbortSignal;
 };
 
 export type SearxngResult = {
@@ -64,7 +65,7 @@ export async function searchSearxng(
 
   try {
     const response = await fetch(`${normalizedBaseUrl.replace(/\/+$/, '')}/search?${searchParams.toString()}`, {
-      signal: getTimeoutSignal(),
+      signal: options.signal ?? getTimeoutSignal(),
     });
 
     if (!response.ok) {
@@ -72,12 +73,12 @@ export async function searchSearxng(
     }
 
     const payload = (await response.json()) as {
-      results?: Array<{
+      results?: {
         title?: unknown;
         url?: unknown;
         content?: unknown;
         publishedDate?: unknown;
-      }>;
+      }[];
     };
 
     if (!Array.isArray(payload.results)) {
@@ -104,7 +105,11 @@ export async function searchSearxng(
       })
       .filter((result) => result !== null)
       .slice(0, SEARCH_RESULT_LIMIT);
-  } catch {
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw error;
+    }
+
     return [];
   }
 }

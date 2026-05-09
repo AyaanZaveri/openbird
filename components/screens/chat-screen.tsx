@@ -24,6 +24,19 @@ import {
   settingsSchema,
   type SettingsForm,
 } from '@/lib/provider-settings';
+import { THEME } from '@/lib/theme';
+import { loadMCPServers, type MCPServerConfig } from '@/lib/mcp-settings';
+import {
+  discoverAndSaveMCPServer,
+  parseMCPSetupCommand,
+  type MCPDiscoveryResult,
+} from '@/lib/mcp-discovery';
+import {
+  closeMCPClients,
+  createMCPToolRuntime,
+  getMCPToolDisplayName,
+  type MCPToolRuntime,
+} from '@/lib/mcp-tools';
 import { searchSearxng } from '@/lib/searxng';
 import { loadUserMemory, normalizeMemoryPrompt, saveUserMemory } from '@/lib/user-memory';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -38,7 +51,6 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import {
-  Bird,
   Brain,
   Check,
   ChevronDown,
@@ -53,6 +65,8 @@ import {
   RotateCw,
   SearchCheckIcon,
   SendHorizontal,
+  Square,
+  Wrench,
   Timer,
   TriangleAlert,
   X
@@ -61,7 +75,7 @@ import * as React from 'react';
 import { Alert, Animated, Image, Platform, Pressable, ScrollView, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { withUniwind } from 'uniwind';
+import { useUniwind, withUniwind } from 'uniwind';
 import { z } from 'zod';
 
 const StyledSafeAreaView = withUniwind(SafeAreaView);
@@ -100,6 +114,17 @@ const webSearchInputSchema = z.object({
     ),
 });
 
+const setupMCPServerInputSchema = z.object({
+  request: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .describe(
+      'The MCP server the user wants to add, including any provider name, docs URL, or token details they supplied.'
+    ),
+});
+
 const webSearchOutputSchema = z.array(
   z.object({
     title: z.string(),
@@ -112,6 +137,10 @@ const webSearchOutputSchema = z.array(
 const speechEnrichmentOutputSchema = z.object({
   correctedText: z.string().trim().min(1),
 });
+
+function keepLastTwoWordsTogether(text: string) {
+  return text.replace(/\s+(\S+)$/, '\u00A0$1');
+}
 
 function getWebSearchContext() {
   const fallbackDate = new Date();
@@ -169,11 +198,19 @@ function buildWebSearchSystemPrompt() {
   ].join('\n');
 }
 
-function buildChatSystemPrompt(memoryPrompt: string, webSearchEnabled: boolean) {
+function buildChatSystemPrompt(
+  memoryPrompt: string,
+  webSearchEnabled: boolean,
+  mcpContext?: {
+    activeServers: string[];
+    errors: string[];
+  }
+) {
   const sections = [
     'You are OpenBird, a helpful assistant.',
     'Use the saved memory only when it improves the current conversation. Do not mention the memory block unless it is relevant.',
     'When the user shares durable personal context that would help future conversations, call the updateMemory tool.',
+    'When the user explicitly asks to add, install, configure, or set up an MCP server, call setupMCPServer. This tool searches docs, infers the remote MCP endpoint, saves it, and tests it.',
     'Save only long-term useful details such as identity, preferences, goals, constraints, recurring projects, communication preferences, or important ongoing context.',
     'Do not save filler, temporary one-off details, or short-term requests that will not matter later.',
   ];
@@ -184,6 +221,25 @@ function buildChatSystemPrompt(memoryPrompt: string, webSearchEnabled: boolean) 
 
   if (webSearchEnabled) {
     sections.push(buildWebSearchSystemPrompt());
+  }
+
+  if (mcpContext?.activeServers.length) {
+    sections.push(
+      [
+        'MCP tools are enabled for this conversation.',
+        `Available MCP servers: ${mcpContext.activeServers.join(', ')}.`,
+        'Use MCP tools when they are relevant to the user request. Do not call unrelated tools just because they are available.',
+      ].join('\n')
+    );
+  }
+
+  if (mcpContext?.errors.length) {
+    sections.push(
+      [
+        'Some configured MCP servers could not be loaded for this request:',
+        ...mcpContext.errors.map((error) => `- ${error}`),
+      ].join('\n')
+    );
   }
 
   return sections.join('\n\n');
@@ -281,6 +337,10 @@ function getToolCallId(part: { toolCallId?: string; id?: string }) {
   return part.toolCallId ?? part.id ?? `tool-${Date.now()}`;
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
 function upsertToolInvocation(
   toolInvocations: ToolInvocation[] | undefined,
   toolCallId: string,
@@ -326,6 +386,22 @@ function createStreamingWebSearchInvocation(
   };
 }
 
+function createStreamingMCPInvocation(
+  toolCallId: string,
+  displayName: string,
+  toolInvocation: Extract<ToolInvocation, { toolName: 'mcp' }> | null
+): Extract<ToolInvocation, { toolName: 'mcp' }> {
+  return {
+    toolCallId,
+    toolName: 'mcp',
+    state: 'input-streaming',
+    displayName: toolInvocation?.displayName ?? displayName,
+    inputText: toolInvocation?.inputText ?? '',
+    input: toolInvocation?.input,
+    output: toolInvocation?.output,
+  };
+}
+
 function sanitizeGeneratedTitle(value: string, fallback: string) {
   const normalized = value.replace(/["'`]/g, '').replace(/\s+/g, ' ').trim();
   return truncateTitle(normalized || fallback, 40);
@@ -334,11 +410,13 @@ function sanitizeGeneratedTitle(value: string, fallback: string) {
 export function ChatScreen() {
   const navigation = useNavigation<any>();
   const router = useRouter();
+  const { theme } = useUniwind();
   const { currentChat, setCurrentChatMessages, setChatTitle, startNewChat, updateChatMessages } =
     useChatHistory();
   const [draft, setDraft] = React.useState('');
   const [attachments, setAttachments] = React.useState<Attachment[]>([]);
   const [settings, setSettings] = React.useState<SettingsForm>(defaultSettings);
+  const [mcpServers, setMCPServers] = React.useState<MCPServerConfig[]>([]);
   const [chatError, setChatError] = React.useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null);
   const [isSending, setIsSending] = React.useState(false);
@@ -348,6 +426,7 @@ export function ChatScreen() {
   const memoryPromptRef = React.useRef('');
   const draftRef = React.useRef('');
   const settingsRef = React.useRef<SettingsForm>(defaultSettings);
+  const activeRequestAbortControllerRef = React.useRef<AbortController | null>(null);
   const [isListening, setIsListening] = React.useState(false);
   const [micPermission, setMicPermission] = React.useState<SpeechRecognitionPermissionStatus | null>(null);
   const [isPostProcessing, setIsPostProcessing] = React.useState(false);
@@ -358,6 +437,8 @@ export function ChatScreen() {
   const speechSessionActiveRef = React.useRef(false);
 
   const rotateAnim = React.useRef(new Animated.Value(0)).current;
+  const primaryForegroundColor =
+    theme === 'dark' ? THEME.dark.primaryForeground : THEME.light.primaryForeground;
 
   React.useEffect(() => {
     if (!isPostProcessing) {
@@ -479,9 +560,11 @@ export function ChatScreen() {
       void (async () => {
         const nextSettings = await loadProviderSettings();
         const nextMemoryPrompt = await loadUserMemory();
+        const nextMCPServers = await loadMCPServers();
         if (!cancelled) {
           setSettings(nextSettings);
           setMemoryPrompt(nextMemoryPrompt);
+          setMCPServers(nextMCPServers);
         }
       })();
 
@@ -526,6 +609,7 @@ export function ChatScreen() {
     if (!isListening) return;
     void Haptics.selectionAsync();
     shouldPostProcessSpeechRef.current = true;
+    setIsListening(false);
     ExpoSpeechRecognitionModule.stop();
   }
 
@@ -613,21 +697,6 @@ export function ChatScreen() {
     }
   }
 
-  async function enrichDraft() {
-    if (isListening || isSending || isPostProcessingRef.current) {
-      return;
-    }
-
-    const currentDraft = draftRef.current.trim();
-    if (!currentDraft) {
-      return;
-    }
-
-    finalizedSpeechRef.current = currentDraft;
-    interimSpeechRef.current = '';
-    await postProcessSpeech(currentDraft);
-  }
-
   async function streamAssistantResponse(
     nextMessages: Message[],
     assistantMessageId: string,
@@ -651,6 +720,9 @@ export function ChatScreen() {
     });
 
     setIsSending(true);
+    const abortController = new AbortController();
+    activeRequestAbortControllerRef.current = abortController;
+    let mcpRuntime: MCPToolRuntime | null = null;
 
     try {
       setChatError(null);
@@ -660,6 +732,7 @@ export function ChatScreen() {
           try {
             const result = await generateText({
               model: provider(parsedSettings.data.model),
+              abortSignal: abortController.signal,
               prompt: `Generate a short title for this chat using the user's request. Return only the title, max 6 words.\n\nUser request: ${titleSource}`,
             });
 
@@ -670,9 +743,18 @@ export function ChatScreen() {
         })();
       }
 
+      mcpRuntime = await createMCPToolRuntime(mcpServers);
+      const activeMCPRuntime = mcpRuntime;
+
       const result = streamText({
         model: provider(parsedSettings.data.model),
-        system: buildChatSystemPrompt(memoryPromptRef.current, webSearchEnabled),
+        abortSignal: abortController.signal,
+        system: buildChatSystemPrompt(memoryPromptRef.current, webSearchEnabled, {
+          activeServers: mcpServers
+            .filter((server) => server.enabled)
+            .map((server) => server.name.trim() || server.url),
+          errors: activeMCPRuntime.errors,
+        }),
         stopWhen: stepCountIs(5),
         tools: {
           updateMemory: tool({
@@ -684,6 +766,7 @@ export function ChatScreen() {
                 const existingMemory = memoryPromptRef.current;
                 const mergeResult = await generateText({
                   model: provider(parsedSettings.data.model),
+                  abortSignal: abortController.signal,
                   system: `You maintain a concise internal user briefing for future conversations. Merge the new candidate memory into the existing memory. Keep only durable, useful facts. Avoid duplicates. Prefer the newest information when facts conflict. Write natural-language paragraphs under clear category sections only when relevant. Do not use key-value fields, checklist formatting, or bullet lists. Each section should read like an internal profile note: direct, information-dense sentences with no fluff.
 
 If relevant, use sections such as Work Context, Personal Context, Top of Mind, Preferences, Relationships, Goals, and Constraints. Only include sections that have meaningful content. Preserve nuance and important background, and update existing sections instead of rewriting everything blindly. Return only the final memory briefing text.
@@ -734,6 +817,25 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
               }
             },
           }),
+          setupMCPServer: tool({
+            description:
+              'Automatically find documentation for a remote MCP server, infer its HTTP or SSE endpoint, save it to OpenBird MCP settings, and test the connection.',
+            inputSchema: setupMCPServerInputSchema,
+            execute: async ({ request }) => {
+              const discoveryResult = await discoverAndSaveMCPServer(
+                request,
+                parsedSettings.data,
+                abortController.signal
+              );
+              const nextMCPServers = await loadMCPServers();
+              setMCPServers(nextMCPServers);
+
+              return {
+                status: discoveryResult.status,
+                message: formatMCPDiscoveryResult(discoveryResult),
+              };
+            },
+          }),
           ...(webSearchEnabled
             ? {
                 webSearch: tool({
@@ -747,6 +849,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                           baseUrl: parsedSettings.data.searxngBaseUrl,
                           categories: 'general',
                           language: 'en',
+                          signal: abortController.signal,
                         })
                       )
                     );
@@ -769,6 +872,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                 }),
               }
             : {}),
+          ...(activeMCPRuntime.tools as Record<string, any>),
         },
         messages: nextMessages
           .filter(
@@ -816,9 +920,12 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
 
         if (
           part.type === 'tool-input-start' &&
-          (part.toolName === 'updateMemory' || part.toolName === 'webSearch')
+          (part.toolName === 'updateMemory' ||
+            part.toolName === 'webSearch' ||
+            part.toolName.startsWith('mcp__'))
         ) {
           const toolCallId = getToolCallId(part);
+          const displayName = getMCPToolDisplayName(part.toolName, activeMCPRuntime.toolNameMap);
 
           updateChatMessages(chatId, (current) =>
             current.map((message) =>
@@ -835,10 +942,16 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                               toolCallId,
                               toolInvocation?.toolName === 'updateMemory' ? toolInvocation : null
                             )
-                          : createStreamingWebSearchInvocation(
+                          : part.toolName === 'webSearch'
+                            ? createStreamingWebSearchInvocation(
                               toolCallId,
                               toolInvocation?.toolName === 'webSearch' ? toolInvocation : null
                             )
+                            : createStreamingMCPInvocation(
+                                toolCallId,
+                                displayName,
+                                toolInvocation?.toolName === 'mcp' ? toolInvocation : null
+                              )
                     ),
                   }
                 : message
@@ -884,7 +997,8 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                                     ? toolInvocation.output
                                     : undefined,
                               }
-                            : {
+                            : existingToolInvocation.toolName === 'webSearch'
+                              ? {
                                 toolCallId,
                                 toolName: 'webSearch',
                                 state: 'input-streaming',
@@ -898,9 +1012,55 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                                     ? toolInvocation.output
                                     : undefined,
                               }
+                              : {
+                                toolCallId,
+                                toolName: 'mcp',
+                                state: 'input-streaming',
+                                displayName: existingToolInvocation.displayName,
+                                inputText: `${toolInvocation?.inputText ?? ''}${part.delta}`,
+                                input:
+                                  toolInvocation?.toolName === 'mcp'
+                                    ? toolInvocation.input
+                                    : undefined,
+                                output:
+                                  toolInvocation?.toolName === 'mcp'
+                                    ? toolInvocation.output
+                                    : undefined,
+                              }
                       ),
                     };
                   })()
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type === 'tool-call' && part.toolName.startsWith('mcp__')) {
+          const toolCallId = getToolCallId(part);
+          const displayName = getMCPToolDisplayName(part.toolName, activeMCPRuntime.toolNameMap);
+
+          updateChatMessages(chatId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    pending: false,
+                    toolInvocations: upsertToolInvocation(
+                      message.toolInvocations,
+                      toolCallId,
+                      (toolInvocation) => ({
+                        toolCallId,
+                        toolName: 'mcp',
+                        state: 'input-available',
+                        displayName,
+                        inputText: toolInvocation?.inputText,
+                        input: part.input,
+                        output:
+                          toolInvocation?.toolName === 'mcp' ? toolInvocation.output : undefined,
+                      })
+                    ),
+                  }
                 : message
             )
           );
@@ -930,6 +1090,36 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                           toolInvocation?.toolName === 'updateMemory'
                             ? toolInvocation.output
                             : undefined,
+                      })
+                    ),
+                  }
+                : message
+            )
+          );
+          continue;
+        }
+
+        if (part.type === 'tool-result' && part.toolName.startsWith('mcp__')) {
+          const toolCallId = getToolCallId(part);
+          const displayName = getMCPToolDisplayName(part.toolName, activeMCPRuntime.toolNameMap);
+
+          updateChatMessages(chatId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    pending: false,
+                    toolInvocations: upsertToolInvocation(
+                      message.toolInvocations,
+                      toolCallId,
+                      (toolInvocation) => ({
+                        toolCallId,
+                        toolName: 'mcp',
+                        state: 'output-available',
+                        displayName,
+                        inputText: toolInvocation?.inputText,
+                        input: toolInvocation?.toolName === 'mcp' ? toolInvocation.input : undefined,
+                        output: part.output,
                       })
                     ),
                   }
@@ -1077,6 +1267,22 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
         )
       );
     } catch (error) {
+      if (abortController.signal.aborted || isAbortError(error)) {
+        updateChatMessages(chatId, (current) =>
+          current.map((entry) =>
+            entry.id === assistantMessageId
+              ? {
+                  ...entry,
+                  pending: false,
+                  text: entry.text || 'Stopped.',
+                  responseTimeMs: Date.now() - startedAt,
+                }
+              : entry
+          )
+        );
+        return;
+      }
+
       const message = error instanceof Error ? error.message : 'Request failed.';
       setChatError(message);
       updateChatMessages(chatId, (current) =>
@@ -1093,6 +1299,12 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
       );
       return;
     } finally {
+      if (mcpRuntime) {
+        await closeMCPClients(mcpRuntime.clients);
+      }
+      if (activeRequestAbortControllerRef.current === abortController) {
+        activeRequestAbortControllerRef.current = null;
+      }
       setIsSending(false);
     }
 
@@ -1106,6 +1318,101 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
           : message
       )
     );
+  }
+
+  async function runMCPSetupCommand(
+    request: string,
+    assistantMessageId: string,
+    chatId: string
+  ) {
+    const startedAt = Date.now();
+    const parsedSettings = settingsSchema.safeParse(settings);
+
+    if (!parsedSettings.success) {
+      setChatError(parsedSettings.error.issues[0]?.message ?? 'Update your provider settings.');
+      router.push('/settings');
+      return;
+    }
+
+    setIsSending(true);
+    const abortController = new AbortController();
+    activeRequestAbortControllerRef.current = abortController;
+    setChatError(null);
+
+    updateChatMessages(chatId, (current) =>
+      current.map((message) =>
+        message.id === assistantMessageId
+          ? {
+              ...message,
+              pending: false,
+              text: `Looking up MCP setup docs for "${request}"...`,
+            }
+          : message
+      )
+    );
+
+    try {
+      const result = await discoverAndSaveMCPServer(
+        request,
+        parsedSettings.data,
+        abortController.signal
+      );
+      const nextMCPServers = await loadMCPServers();
+      setMCPServers(nextMCPServers);
+
+      updateChatMessages(chatId, (current) =>
+        current.map((message) =>
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                pending: false,
+                text: formatMCPDiscoveryResult(result),
+                responseTimeMs: Date.now() - startedAt,
+              }
+            : message
+        )
+      );
+    } catch (error) {
+      if (abortController.signal.aborted || isAbortError(error)) {
+        updateChatMessages(chatId, (current) =>
+          current.map((entry) =>
+            entry.id === assistantMessageId
+              ? {
+                  ...entry,
+                  pending: false,
+                  text: entry.text || 'Stopped.',
+                  responseTimeMs: Date.now() - startedAt,
+                }
+              : entry
+          )
+        );
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Unable to set up that MCP server.';
+      setChatError(message);
+      updateChatMessages(chatId, (current) =>
+        current.map((entry) =>
+          entry.id === assistantMessageId
+            ? {
+                ...entry,
+                pending: false,
+                text: `I could not set up that MCP server automatically.\n\n${message}`,
+                responseTimeMs: Date.now() - startedAt,
+              }
+            : entry
+        )
+      );
+    } finally {
+      if (activeRequestAbortControllerRef.current === abortController) {
+        activeRequestAbortControllerRef.current = null;
+      }
+      setIsSending(false);
+    }
+  }
+
+  function stopActiveRequest() {
+    activeRequestAbortControllerRef.current?.abort();
   }
 
   async function pickImages() {
@@ -1169,6 +1476,8 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
       return;
     }
 
+    const mcpSetupRequest = attachments.length === 0 ? parseMCPSetupCommand(value) : null;
+
     const timestamp = Date.now();
     const userMessage: Message = {
       id: `${timestamp}-user`,
@@ -1198,6 +1507,26 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
     setDraft('');
     setAttachments([]);
     resetSpeechDraftState();
+
+    if (mcpSetupRequest !== null) {
+      if (!mcpSetupRequest) {
+        updateChatMessages(chatId, (current) =>
+          current.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  pending: false,
+                  text: 'Tell me which MCP server to set up after the command, for example `/mcp GitHub MCP remote server`.',
+                }
+              : message
+          )
+        );
+        return;
+      }
+
+      await runMCPSetupCommand(mcpSetupRequest, assistantMessageId, chatId);
+      return;
+    }
 
     await streamAssistantResponse(
       nextMessages,
@@ -1324,12 +1653,12 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
             </Button>
 
             <View className="flex-1">
-              <View className="flex flex-row items-center gap-2">
+              <View className="flex flex-row items-center">
                 {/* <Icon as={Origami} className="text-primary size-5" /> */}
                 <Text className="text-lg font-semibold tracking-tight">OpenBird</Text>
               </View>
               <Pressable
-                className="mt-0.5 flex-row items-center gap-1 self-start"
+                className="flex-row items-center gap-1 self-start"
                 onPress={() => setIsModelSheetOpen(true)}
                 accessibilityRole="button"
                 accessibilityLabel="Choose model">
@@ -1361,7 +1690,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                 <Text
                   className="text-center text-[2.35rem] tracking-tight max-w-64 text-white"
                   style={{ fontFamily: 'InstrumentSerif_400Regular' }}>
-                  {welcomeMessages[welcomeIndex]}
+                  {keepLastTwoWordsTogether(welcomeMessages[welcomeIndex])}
                 </Text>
               </View>
             ) : (
@@ -1460,7 +1789,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                           className={
                             webSearchEnabled
                               ? 'text-background size-4.5'
-                              : 'text-muted-foreground size-4.5'
+                              : 'text-foreground size-4.5'
                           }
                         />
                       </Button>
@@ -1493,23 +1822,10 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                           <Button
                             size="icon"
                             variant="secondary"
-                            className="size-9 rounded-full bg-cyan-500/10 active:bg-cyan-500/20"
-                            disabled={isSending || isListening || !draft.trim()}
-                            onPress={() => {
-                              void enrichDraft();
-                            }}
-                            accessibilityLabel="Enrich text"
-                            accessibilityRole="button"
-                            accessibilityHint="Fix punctuation, grammar, and spelling using the speech enrichment model">
-                            <Icon as={Brain} className="text-cyan-600 size-4.5 dark:text-cyan-400" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="secondary"
                             className={
                               isListening
-                                ? 'size-9 rounded-full bg-amber-500'
-                                : 'size-9 rounded-full bg-amber-500/10 active:bg-amber-500/20'
+                                ? 'size-9 rounded-full bg-amber-500 active:bg-amber-500'
+                                : 'size-9 rounded-full bg-amber-500/5 active:bg-amber-500/15'
                             }
                             disabled={isSending}
                             onPress={() => {
@@ -1532,10 +1848,20 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
                       <Button
                         size="icon"
                         className="size-9 rounded-full"
-                        disabled={isSending}
-                        onPress={() => void sendMessage()}
-                        accessibilityLabel="Send message">
-                        <Icon as={SendHorizontal} className="text-primary-foreground size-4.5" />
+                        onPress={() => {
+                          if (isSending) {
+                            stopActiveRequest();
+                            return;
+                          }
+
+                          void sendMessage();
+                        }}
+                        accessibilityLabel={isSending ? 'Stop response' : 'Send message'}>
+                        <Icon
+                          as={isSending ? Square : SendHorizontal}
+                          className="text-primary-foreground size-4.5"
+                          fill={isSending ? primaryForegroundColor : 'none'}
+                        />
                       </Button>
                     </View>
                   </View>
@@ -1555,6 +1881,40 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
       />
     </StyledSafeAreaView>
   );
+}
+
+function formatMCPDiscoveryResult(result: MCPDiscoveryResult) {
+  const sourceLines = result.sources
+    .slice(0, 3)
+    .map((source, index) => `${index + 1}. [${source.title}](${source.url})`)
+    .join('\n');
+
+  if (result.status === 'created' || result.status === 'updated') {
+    return [
+      result.status === 'created' ? 'Added MCP server.' : 'Updated MCP server.',
+      '',
+      `Name: ${result.server.name}`,
+      `URL: ${result.server.url}`,
+      `Transport: ${result.server.transport.toUpperCase()}`,
+      result.server.bearerToken || result.server.headersJson
+        ? 'Authentication: configured from the command/docs.'
+        : 'Authentication: no token was added. If this server requires auth, add the token in Settings.',
+      '',
+      result.summary,
+      '',
+      `Connection test: ${result.testMessage}`,
+      sourceLines ? `\nSources:\n${sourceLines}` : '',
+    ]
+      .filter((line) => line !== '')
+      .join('\n');
+  }
+
+  return [
+    result.summary,
+    sourceLines ? `\nSources I checked:\n${sourceLines}` : '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
 }
 
 function ChatBubble({
@@ -1686,6 +2046,31 @@ function ChatBubble({
 }
 
 function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvocation }) {
+  if (toolInvocation.toolName === 'mcp') {
+    const preview = getMCPInvocationPreview(toolInvocation.input ?? toolInvocation.inputText);
+
+    return (
+      <View className="border-border/50 bg-emerald-500/2 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5">
+        <Icon as={Wrench} className="text-emerald-600 size-4 dark:text-emerald-400" />
+        <View className={preview ? 'flex-1 gap-0.5' : 'flex-1'}>
+          <Text className="text-sm font-medium">
+            {toolInvocation.state === 'output-available' ? 'Used MCP tool' : 'Calling MCP tool...'}
+          </Text>
+          <Text className="text-muted-foreground text-sm" numberOfLines={1}>
+            {toolInvocation.displayName}
+          </Text>
+          {preview ? (
+            <Text
+              className="text-muted-foreground text-xs font-mono tracking-tight mr-2"
+              numberOfLines={2}>
+              {preview}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    );
+  }
+
   if (toolInvocation.toolName === 'webSearch') {
     const queryPreview = getWebSearchQueryPreview(toolInvocation);
 
@@ -1776,6 +2161,22 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
       </View>
     </View>
   );
+}
+
+function getMCPInvocationPreview(value: unknown) {
+  if (!value) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
+  }
 }
 
 function getWebSearchQueryPreview(toolInvocation: Extract<ToolInvocation, { toolName: 'webSearch' }>) {

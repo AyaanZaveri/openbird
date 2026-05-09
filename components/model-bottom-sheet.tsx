@@ -151,7 +151,7 @@ export function ModelBottomSheet({
       <Pressable
         className={cn(
           'active:bg-accent flex-row items-center justify-between rounded-md px-4 py-3.5',
-          index % 2 === 0 ? 'bg-card' : 'bg-muted/50'
+          index % 2 === 0 ? 'bg-card' : 'bg-muted/30'
         )}
         onPress={() => {
           onSelect(item.value);

@@ -20,6 +20,14 @@ import {
   settingsSchema,
   type SettingsForm,
 } from '@/lib/provider-settings';
+import {
+  createMCPServerConfig,
+  loadMCPServers,
+  mcpServersSchema,
+  saveMCPServers,
+  testMCPServerConnection,
+  type MCPServerConfig,
+} from '@/lib/mcp-settings';
 import { loadUserMemory, saveUserMemory } from '@/lib/user-memory';
 import {
   loadThemePreference,
@@ -35,6 +43,10 @@ import {
   Eclipse,
   Database,
   Globe,
+  Plug,
+  Plus,
+  Server,
+  Trash2,
   Moon,
   Sun,
   SunMoon,
@@ -44,7 +56,6 @@ import { InteractionManager, ScrollView, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Uniwind, useUniwind, withUniwind } from 'uniwind';
-import { BlurView } from 'expo-blur';
 
 const StyledSafeAreaView = withUniwind(SafeAreaView);
 
@@ -56,7 +67,9 @@ export function SettingsScreen() {
   const [settingsError, setSettingsError] = React.useState<string | null>(null);
   const [themePreference, setThemePreference] = React.useState<ThemePreference>('system');
   const [memoryPrompt, setMemoryPrompt] = React.useState('');
-  const [hasLoadedInitialState, setHasLoadedInitialState] = React.useState(false);
+  const [mcpServers, setMCPServers] = React.useState<MCPServerConfig[]>([]);
+  const [mcpTestResults, setMCPTestResults] = React.useState<Record<string, string>>({});
+  const [testingMCPServerId, setTestingMCPServerId] = React.useState<string | null>(null);
   const [isThemeSheetOpen, setIsThemeSheetOpen] = React.useState(false);
   const [isModelSheetOpen, setIsModelSheetOpen] = React.useState(false);
   const [isSpeechEnrichmentModelSheetOpen, setIsSpeechEnrichmentModelSheetOpen] = React.useState(false);
@@ -83,11 +96,12 @@ export function SettingsScreen() {
         const nextSettings = await loadProviderSettings();
         const storedThemePreference = await loadThemePreference();
         const storedMemory = await loadUserMemory();
+        const storedMCPServers = await loadMCPServers();
         if (!cancelled) {
           setSettings(nextSettings);
           setThemePreference(storedThemePreference);
           setMemoryPrompt(storedMemory);
-          setHasLoadedInitialState(true);
+          setMCPServers(storedMCPServers);
         }
       })();
     });
@@ -105,9 +119,17 @@ export function SettingsScreen() {
       return;
     }
 
+    const parsedMCPServers = mcpServersSchema.safeParse(mcpServers);
+    if (!parsedMCPServers.success) {
+      setSettingsError(parsedMCPServers.error.issues[0]?.message ?? 'Update the MCP server settings.');
+      return;
+    }
+
     await saveProviderSettings(parsedSettings.data);
     await saveUserMemory(memoryPrompt);
+    await saveMCPServers(parsedMCPServers.data);
     setSettings(parsedSettings.data);
+    setMCPServers(parsedMCPServers.data);
     setSettingsError(null);
     router.back();
   }
@@ -139,6 +161,43 @@ export function SettingsScreen() {
   function selectSpeechEnrichmentModel(modelValue: string) {
     setSettingsError(null);
     setSettings((current) => ({ ...current, speechEnrichmentModel: modelValue }));
+  }
+
+  function addMCPServer() {
+    setSettingsError(null);
+    setMCPServers((current) => [...current, createMCPServerConfig()]);
+  }
+
+  function updateMCPServer(serverId: string, updater: (server: MCPServerConfig) => MCPServerConfig) {
+    setSettingsError(null);
+    setMCPTestResults((current) => {
+      const nextResults = { ...current };
+      delete nextResults[serverId];
+      return nextResults;
+    });
+    setMCPServers((current) =>
+      current.map((server) => (server.id === serverId ? updater(server) : server))
+    );
+  }
+
+  function removeMCPServer(serverId: string) {
+    setSettingsError(null);
+    setMCPTestResults((current) => {
+      const nextResults = { ...current };
+      delete nextResults[serverId];
+      return nextResults;
+    });
+    setMCPServers((current) => current.filter((server) => server.id !== serverId));
+  }
+
+  async function testMCPServer(server: MCPServerConfig) {
+    setTestingMCPServerId(server.id);
+    const result = await testMCPServerConnection(server);
+    setMCPTestResults((current) => ({
+      ...current,
+      [server.id]: result.message,
+    }));
+    setTestingMCPServerId(null);
   }
 
   return (
@@ -334,6 +393,159 @@ export function SettingsScreen() {
                     setSettings((current) => ({ ...current, searxngBaseUrl: value }));
                   }}
                 />
+              </View>
+
+              <View className="mt-2 gap-1">
+                <View className="flex-row items-center gap-2">
+                  <Icon as={Plug} className="text-foreground size-5" />
+                  <Text className="text-lg font-medium">MCP Servers</Text>
+                </View>
+                <Text className="text-muted-foreground text-sm">
+                  Add remote MCP servers whose tools can be used during chat.
+                </Text>
+              </View>
+
+              <View className="gap-3">
+                {mcpServers.length === 0 ? (
+                  <View className="border-border bg-muted/30 rounded-xl border px-3 py-3">
+                    <Text className="text-muted-foreground text-sm">
+                      No MCP servers configured yet.
+                    </Text>
+                  </View>
+                ) : null}
+
+                {mcpServers.map((server, index) => (
+                  <View key={server.id} className="border-border rounded-xl border p-3 gap-3">
+                    <View className="flex-row items-center justify-between gap-2">
+                      <View className="min-w-0 flex-1 flex-row items-center gap-2">
+                        <Icon as={Server} className="text-muted-foreground size-4" />
+                        <Text className="font-medium" numberOfLines={1}>
+                          {server.name.trim() || `MCP Server ${index + 1}`}
+                        </Text>
+                      </View>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8 rounded-lg"
+                        onPress={() => removeMCPServer(server.id)}
+                        accessibilityLabel="Remove MCP server">
+                        <Icon as={Trash2} className="text-destructive size-4" />
+                      </Button>
+                    </View>
+
+                    <View className="gap-2">
+                      <Text className="text-sm font-medium">Name</Text>
+                      <Input
+                        autoCapitalize="words"
+                        placeholder="GitHub MCP"
+                        value={server.name}
+                        onChangeText={(value) =>
+                          updateMCPServer(server.id, (current) => ({ ...current, name: value }))
+                        }
+                      />
+                    </View>
+
+                    <View className="gap-2">
+                      <Text className="text-sm font-medium">Server URL</Text>
+                      <Input
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        keyboardType="url"
+                        placeholder="https://example.com/mcp"
+                        value={server.url}
+                        onChangeText={(value) =>
+                          updateMCPServer(server.id, (current) => ({ ...current, url: value }))
+                        }
+                      />
+                    </View>
+
+                    <View className="gap-2">
+                      <Text className="text-sm font-medium">Transport</Text>
+                      <View className="flex-row gap-2">
+                        {(['http', 'sse'] as const).map((transport) => (
+                          <Button
+                            key={transport}
+                            variant={server.transport === transport ? 'default' : 'outline'}
+                            className="flex-1"
+                            onPress={() =>
+                              updateMCPServer(server.id, (current) => ({
+                                ...current,
+                                transport,
+                              }))
+                            }>
+                            <Text className="uppercase">{transport}</Text>
+                          </Button>
+                        ))}
+                      </View>
+                    </View>
+
+                    <View className="gap-2">
+                      <Text className="text-sm font-medium">Bearer Token</Text>
+                      <Input
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        secureTextEntry
+                        placeholder="Optional"
+                        value={server.bearerToken}
+                        onChangeText={(value) =>
+                          updateMCPServer(server.id, (current) => ({
+                            ...current,
+                            bearerToken: value,
+                          }))
+                        }
+                      />
+                    </View>
+
+                    <View className="gap-2">
+                      <Text className="text-sm font-medium">Custom Headers JSON</Text>
+                      <Textarea
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        placeholder={'{"X-API-Key":"..."}'}
+                        value={server.headersJson}
+                        onChangeText={(value) =>
+                          updateMCPServer(server.id, (current) => ({
+                            ...current,
+                            headersJson: value,
+                          }))
+                        }
+                        className="min-h-20"
+                      />
+                    </View>
+
+                    <View className="flex-row gap-2">
+                      <Button
+                        variant={server.enabled ? 'default' : 'outline'}
+                        className="flex-1"
+                        onPress={() =>
+                          updateMCPServer(server.id, (current) => ({
+                            ...current,
+                            enabled: !current.enabled,
+                          }))
+                        }>
+                        <Text>{server.enabled ? 'Enabled' : 'Disabled'}</Text>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        disabled={testingMCPServerId === server.id}
+                        onPress={() => void testMCPServer(server)}>
+                        <Text>{testingMCPServerId === server.id ? 'Testing...' : 'Test'}</Text>
+                      </Button>
+                    </View>
+
+                    {mcpTestResults[server.id] ? (
+                      <Text className="text-muted-foreground text-sm">
+                        {mcpTestResults[server.id]}
+                      </Text>
+                    ) : null}
+                  </View>
+                ))}
+
+                <Button variant="outline" className="w-full justify-center" onPress={addMCPServer}>
+                  <Icon as={Plus} className="mr-2 size-4" />
+                  <Text>Add MCP Server</Text>
+                </Button>
               </View>
 
               <View className="mt-2 gap-1">

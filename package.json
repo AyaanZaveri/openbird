@@ -12,6 +12,7 @@
     "lint": "expo lint"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^1.0.41",
     "@ai-sdk/openai-compatible": "^2.0.41",
     "@expo-google-fonts/geist": "^0.4.1",
     "@expo-google-fonts/geist-mono": "^0.4.1",

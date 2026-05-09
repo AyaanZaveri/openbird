@@ -69,7 +69,8 @@ import {
   Wrench,
   Timer,
   TriangleAlert,
-  X
+  X,
+  Hammer
 } from 'lucide-react-native';
 import * as React from 'react';
 import { Alert, Animated, Image, Platform, Pressable, ScrollView, View } from 'react-native';
@@ -339,6 +340,55 @@ function getToolCallId(part: { toolCallId?: string; id?: string }) {
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === 'AbortError';
+}
+
+function isMCPToolName(
+  toolName: string,
+  toolNameMap: Record<string, { serverName: string; toolName: string }>
+) {
+  return toolName in toolNameMap;
+}
+
+function summarizeLogValue(value: unknown) {
+  if (value === undefined) {
+    return { type: 'undefined' };
+  }
+
+  if (value === null) {
+    return { type: 'null' };
+  }
+
+  if (typeof value !== 'object') {
+    return { type: typeof value, value };
+  }
+
+  if (Array.isArray(value)) {
+    return { type: 'array', length: value.length, preview: value.slice(0, 3) };
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    type: 'object',
+    keys: Object.keys(record),
+    preview: Object.fromEntries(
+      Object.entries(record)
+        .filter(([key]) => !/token|authorization|api[-_]?key|secret|password/i.test(key))
+        .slice(0, 8)
+    ),
+  };
+}
+
+function serializeLogError(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return { type: typeof error, value: error };
+  }
+
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    cause: error.cause instanceof Error ? serializeLogError(error.cause) : error.cause,
+  };
 }
 
 function upsertToolInvocation(
@@ -745,29 +795,18 @@ export function ChatScreen() {
 
       mcpRuntime = await createMCPToolRuntime(mcpServers);
       const activeMCPRuntime = mcpRuntime;
-
-      const result = streamText({
-        model: provider(parsedSettings.data.model),
-        abortSignal: abortController.signal,
-        system: buildChatSystemPrompt(memoryPromptRef.current, webSearchEnabled, {
-          activeServers: mcpServers
-            .filter((server) => server.enabled)
-            .map((server) => server.name.trim() || server.url),
-          errors: activeMCPRuntime.errors,
-        }),
-        stopWhen: stepCountIs(5),
-        tools: {
-          updateMemory: tool({
-            description:
-              'Save durable user context that should persist across future conversations. Use this only for long-term helpful facts, preferences, goals, constraints, or recurring projects.',
-            inputSchema: updateMemoryInputSchema,
-            execute: async ({ memory, reason }) => {
-              try {
-                const existingMemory = memoryPromptRef.current;
-                const mergeResult = await generateText({
-                  model: provider(parsedSettings.data.model),
-                  abortSignal: abortController.signal,
-                  system: `You maintain a concise internal user briefing for future conversations. Merge the new candidate memory into the existing memory. Keep only durable, useful facts. Avoid duplicates. Prefer the newest information when facts conflict. Write natural-language paragraphs under clear category sections only when relevant. Do not use key-value fields, checklist formatting, or bullet lists. Each section should read like an internal profile note: direct, information-dense sentences with no fluff.
+      const allTools = {
+        updateMemory: tool({
+          description:
+            'Save durable user context that should persist across future conversations. Use this only for long-term helpful facts, preferences, goals, constraints, or recurring projects.',
+          inputSchema: updateMemoryInputSchema,
+          execute: async ({ memory, reason }) => {
+            try {
+              const existingMemory = memoryPromptRef.current;
+              const mergeResult = await generateText({
+                model: provider(parsedSettings.data.model),
+                abortSignal: abortController.signal,
+                system: `You maintain a concise internal user briefing for future conversations. Merge the new candidate memory into the existing memory. Keep only durable, useful facts. Avoid duplicates. Prefer the newest information when facts conflict. Write natural-language paragraphs under clear category sections only when relevant. Do not use key-value fields, checklist formatting, or bullet lists. Each section should read like an internal profile note: direct, information-dense sentences with no fluff.
 
 If relevant, use sections such as Work Context, Personal Context, Top of Mind, Preferences, Relationships, Goals, and Constraints. Only include sections that have meaningful content. Preserve nuance and important background, and update existing sections instead of rewriting everything blindly. Return only the final memory briefing text.
 
@@ -780,99 +819,143 @@ Ayaan is a 17-year-old full-stack developer in Toronto, graduating from Woodland
 Personal Context
 
 He communicates in a direct, casual, and concise style. He values honest pushback over reassurance and dislikes overly polished or corporate responses.`,
-                  prompt: [
-                    existingMemory.trim()
-                      ? `Existing memory:\n${existingMemory.trim()}`
-                      : 'Existing memory:\n(none)',
-                    `New memory candidate:\n${memory}`,
-                    reason?.trim() ? `Why it matters:\n${reason.trim()}` : null,
-                  ]
-                    .filter(Boolean)
-                    .join('\n\n'),
-                });
+                prompt: [
+                  existingMemory.trim()
+                    ? `Existing memory:\n${existingMemory.trim()}`
+                    : 'Existing memory:\n(none)',
+                  `New memory candidate:\n${memory}`,
+                  reason?.trim() ? `Why it matters:\n${reason.trim()}` : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n\n'),
+              });
 
-                const nextMemoryPrompt = normalizeMemoryPrompt(mergeResult.text);
-                const normalizedExistingMemory = normalizeMemoryPrompt(existingMemory);
+              const nextMemoryPrompt = normalizeMemoryPrompt(mergeResult.text);
+              const normalizedExistingMemory = normalizeMemoryPrompt(existingMemory);
 
-                if (!nextMemoryPrompt || nextMemoryPrompt === normalizedExistingMemory) {
-                  return {
-                    status: 'unchanged' as const,
-                    summary: 'Memory already covered this context.',
-                  };
-                }
-
-                await saveUserMemory(nextMemoryPrompt);
-                memoryPromptRef.current = nextMemoryPrompt;
-                setMemoryPrompt(nextMemoryPrompt);
-
+              if (!nextMemoryPrompt || nextMemoryPrompt === normalizedExistingMemory) {
                 return {
-                  status: 'saved' as const,
-                  summary: 'Saved.',
-                };
-              } catch (error) {
-                return {
-                  status: 'error' as const,
-                  summary: error instanceof Error ? error.message : 'Unable to update memory.',
+                  status: 'unchanged' as const,
+                  summary: 'Memory already covered this context.',
                 };
               }
-            },
-          }),
-          setupMCPServer: tool({
-            description:
-              'Automatically find documentation for a remote MCP server, infer its HTTP or SSE endpoint, save it to OpenBird MCP settings, and test the connection.',
-            inputSchema: setupMCPServerInputSchema,
-            execute: async ({ request }) => {
-              const discoveryResult = await discoverAndSaveMCPServer(
-                request,
-                parsedSettings.data,
-                abortController.signal
-              );
-              const nextMCPServers = await loadMCPServers();
-              setMCPServers(nextMCPServers);
+
+              await saveUserMemory(nextMemoryPrompt);
+              memoryPromptRef.current = nextMemoryPrompt;
+              setMemoryPrompt(nextMemoryPrompt);
 
               return {
-                status: discoveryResult.status,
-                message: formatMCPDiscoveryResult(discoveryResult),
+                status: 'saved' as const,
+                summary: 'Saved.',
               };
-            },
-          }),
-          ...(webSearchEnabled
-            ? {
-                webSearch: tool({
-                  description:
-                    'Search the web for recent or factual information using 2 to 4 short queries and return concise source snippets.',
-                  inputSchema: webSearchInputSchema,
-                  execute: async ({ queries }) => {
-                    const settledResults = await Promise.all(
-                      queries.map((query) =>
-                        searchSearxng(query, {
-                          baseUrl: parsedSettings.data.searxngBaseUrl,
-                          categories: 'general',
-                          language: 'en',
-                          signal: abortController.signal,
-                        })
-                      )
-                    );
+            } catch (error) {
+              return {
+                status: 'error' as const,
+                summary: error instanceof Error ? error.message : 'Unable to update memory.',
+              };
+            }
+          },
+        }),
+        setupMCPServer: tool({
+          description:
+            'Automatically find documentation for a remote MCP server, infer its HTTP or SSE endpoint, save it to OpenBird MCP settings, and test the connection.',
+          inputSchema: setupMCPServerInputSchema,
+          execute: async ({ request }) => {
+            const discoveryResult = await discoverAndSaveMCPServer(
+              request,
+              parsedSettings.data,
+              abortController.signal
+            );
+            const nextMCPServers = await loadMCPServers();
+            setMCPServers(nextMCPServers);
 
-                    const deduped = new Map<string, (typeof settledResults)[number][number]>();
+            return {
+              status: discoveryResult.status,
+              message: formatMCPDiscoveryResult(discoveryResult),
+            };
+          },
+        }),
+        ...(webSearchEnabled
+          ? {
+              webSearch: tool({
+                description:
+                  'Search the web for recent or factual information using 2 to 4 short queries and return concise source snippets.',
+                inputSchema: webSearchInputSchema,
+                execute: async ({ queries }) => {
+                  const settledResults = await Promise.all(
+                    queries.map((query) =>
+                      searchSearxng(query, {
+                        baseUrl: parsedSettings.data.searxngBaseUrl,
+                        categories: 'general',
+                        language: 'en',
+                        signal: abortController.signal,
+                      })
+                    )
+                  );
 
-                    for (const resultSet of settledResults) {
-                      for (const resultItem of resultSet) {
-                        const normalizedUrl = resultItem.url.trim();
-                        if (!normalizedUrl || deduped.has(normalizedUrl)) {
-                          continue;
-                        }
+                  const deduped = new Map<string, (typeof settledResults)[number][number]>();
 
-                        deduped.set(normalizedUrl, resultItem);
+                  for (const resultSet of settledResults) {
+                    for (const resultItem of resultSet) {
+                      const normalizedUrl = resultItem.url.trim();
+                      if (!normalizedUrl || deduped.has(normalizedUrl)) {
+                        continue;
                       }
-                    }
 
-                    return [...deduped.values()].slice(0, 12);
-                  },
-                }),
-              }
-            : {}),
-          ...(activeMCPRuntime.tools as Record<string, any>),
+                      deduped.set(normalizedUrl, resultItem);
+                    }
+                  }
+
+                  return [...deduped.values()].slice(0, 12);
+                },
+              }),
+            }
+          : {}),
+        ...(activeMCPRuntime.tools as Record<string, any>),
+      };
+
+      const result = streamText({
+        model: provider(parsedSettings.data.model),
+        abortSignal: abortController.signal,
+        system: buildChatSystemPrompt(memoryPromptRef.current, webSearchEnabled, {
+          activeServers: mcpServers
+            .filter((server) => server.enabled)
+            .map((server) => server.name.trim() || server.url),
+          errors: activeMCPRuntime.errors,
+        }),
+        stopWhen: stepCountIs(5),
+        tools: allTools,
+        onError: ({ error }) => {
+          console.error('[OpenBird AI] stream error', serializeLogError(error));
+        },
+        experimental_onToolCallStart: (event) => {
+          const toolCall = event.toolCall;
+          if (!toolCall || !isMCPToolName(toolCall.toolName, activeMCPRuntime.toolNameMap)) {
+            return;
+          }
+
+          console.info('[OpenBird AI] MCP tool call start', {
+            stepNumber: event.stepNumber,
+            toolName: toolCall.toolName,
+            input: summarizeLogValue(toolCall.input),
+          });
+        },
+        experimental_onToolCallFinish: (event) => {
+          const toolCall = event.toolCall;
+          if (
+            event.success ||
+            !toolCall ||
+            !isMCPToolName(toolCall.toolName, activeMCPRuntime.toolNameMap)
+          ) {
+            return;
+          }
+
+          console.error('[OpenBird AI] MCP tool call error', {
+            stepNumber: event.stepNumber,
+            toolName: toolCall.toolName,
+            durationMs: event.durationMs,
+            error: serializeLogError(event.error),
+          });
         },
         messages: nextMessages
           .filter(
@@ -922,7 +1005,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
           part.type === 'tool-input-start' &&
           (part.toolName === 'updateMemory' ||
             part.toolName === 'webSearch' ||
-            part.toolName.startsWith('mcp__'))
+            isMCPToolName(part.toolName, activeMCPRuntime.toolNameMap))
         ) {
           const toolCallId = getToolCallId(part);
           const displayName = getMCPToolDisplayName(part.toolName, activeMCPRuntime.toolNameMap);
@@ -1036,7 +1119,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
           continue;
         }
 
-        if (part.type === 'tool-call' && part.toolName.startsWith('mcp__')) {
+        if (part.type === 'tool-call' && isMCPToolName(part.toolName, activeMCPRuntime.toolNameMap)) {
           const toolCallId = getToolCallId(part);
           const displayName = getMCPToolDisplayName(part.toolName, activeMCPRuntime.toolNameMap);
 
@@ -1099,7 +1182,7 @@ He communicates in a direct, casual, and concise style. He values honest pushbac
           continue;
         }
 
-        if (part.type === 'tool-result' && part.toolName.startsWith('mcp__')) {
+        if (part.type === 'tool-result' && isMCPToolName(part.toolName, activeMCPRuntime.toolNameMap)) {
           const toolCallId = getToolCallId(part);
           const displayName = getMCPToolDisplayName(part.toolName, activeMCPRuntime.toolNameMap);
 
@@ -2051,10 +2134,10 @@ function MemoryToolInvocationCard({ toolInvocation }: { toolInvocation: ToolInvo
 
     return (
       <View className="border-border/50 bg-emerald-500/2 flex-row items-center gap-3 rounded-2xl border px-3 py-2.5">
-        <Icon as={Wrench} className="text-emerald-600 size-4 dark:text-emerald-400" />
+        <Icon as={Hammer} className="text-emerald-600 size-4 dark:text-emerald-400" />
         <View className={preview ? 'flex-1 gap-0.5' : 'flex-1'}>
           <Text className="text-sm font-medium">
-            {toolInvocation.state === 'output-available' ? 'Used MCP tool' : 'Calling MCP tool...'}
+            {toolInvocation.state === 'output-available' ? 'Called MCP tool' : 'Scouting MCP tool...'}
           </Text>
           <Text className="text-muted-foreground text-sm" numberOfLines={1}>
             {toolInvocation.displayName}

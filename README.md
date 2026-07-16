@@ -1,6 +1,6 @@
-# Hacker News
+# OpenBird
 
-A production-ready Expo React Native app for reading the current Hacker News front page on iOS and Android.
+Building a search and MCP enabled chat app with Expo.
 
 ## Stack
 

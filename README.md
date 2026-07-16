@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/openbird-logo.png" width="120" alt="OpenBird logo" />
+  <img src="assets/openbird-logo.png" width="90" alt="OpenBird logo" />
 
   <h3>OpenBird</h3>
 

@@ -1,10 +1,10 @@
 <div align="center">
   <img src="assets/openbird-logo.png" width="120" alt="OpenBird logo" />
+
+  <h3>OpenBird</h3>
+
+  Building a search and MCP enabled chat app with Expo.
 </div>
-
-<h1 align="center">OpenBird</h1>
-
-Building a search and MCP enabled chat app with Expo.
 
 <div align="center">
 

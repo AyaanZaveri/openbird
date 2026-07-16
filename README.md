@@ -2,7 +2,13 @@
 
 Building a search and MCP enabled chat app with Expo.
 
+<div align="center">
+
 https://github.com/user-attachments/assets/7b3d5a79-81ec-4a9e-a8a2-dd2251e45010
+
+**OpenBird Demo**
+
+</div>
 
 ## Stack
 
